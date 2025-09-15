@@ -80,6 +80,9 @@ private:
     // 处理客户端数据
     void handleClientData(int client_fd);
     
+    // 内部版本，假设调用者已持有锁 clients_mutex_
+    void handleClientDisconnect_locked(int client_fd);
+
     // 处理客户端断开
     void handleClientDisconnect(int client_fd);
     

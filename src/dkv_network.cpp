@@ -196,10 +196,9 @@ void NetworkServer::handleClientData(int client_fd) {
     
     ClientConnection* client = it->second.get();
     char buffer[4096];
-
     ssize_t bytes_read = read(client_fd, buffer, sizeof(buffer));
     if (bytes_read <= 0) {
-        handleClientDisconnect(client_fd);
+        handleClientDisconnect_locked(client_fd);
         return;
     }
     client->read_buffer.append(buffer, bytes_read);
@@ -225,8 +224,8 @@ void NetworkServer::handleClientData(int client_fd) {
     }
 }
 
-void NetworkServer::handleClientDisconnect(int client_fd) {
-    std::lock_guard<std::mutex> lock(clients_mutex_);
+// 内部版本，假设调用者已持有锁 clients_mutex_
+void NetworkServer::handleClientDisconnect_locked(int client_fd) {
     auto it = clients_.find(client_fd);
     if (it != clients_.end()) {
         std::cout << "客户端断开连接: " << inet_ntoa(it->second->addr.sin_addr) 
@@ -234,6 +233,12 @@ void NetworkServer::handleClientDisconnect(int client_fd) {
         removeEpollEvent(client_fd);
         clients_.erase(it);
     }
+}
+
+// 公开版本，会锁 clients_mutex_
+void NetworkServer::handleClientDisconnect(int client_fd) {
+    std::lock_guard<std::mutex> lock(clients_mutex_);
+    handleClientDisconnect_locked(client_fd);
 }
 
 Response NetworkServer::executeCommand(const Command& command) {
