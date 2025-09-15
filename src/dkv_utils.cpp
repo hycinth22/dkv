@@ -16,7 +16,16 @@ CommandType Utils::stringToCommandType(const std::string& cmd) {
         {"EXPIRE", CommandType::EXPIRE},
         {"TTL", CommandType::TTL},
         {"INCR", CommandType::INCR},
-        {"DECR", CommandType::DECR}
+        {"DECR", CommandType::DECR},
+        // 哈希命令
+        {"HSET", CommandType::HSET},
+        {"HGET", CommandType::HGET},
+        {"HGETALL", CommandType::HGETALL},
+        {"HDEL", CommandType::HDEL},
+        {"HEXISTS", CommandType::HEXISTS},
+        {"HKEYS", CommandType::HKEYS},
+        {"HVALS", CommandType::HVALS},
+        {"HLEN", CommandType::HLEN},
     };
     
     auto it = command_map.find(cmd);
@@ -25,6 +34,7 @@ CommandType Utils::stringToCommandType(const std::string& cmd) {
 
 std::string Utils::commandTypeToString(CommandType type) {
     static const std::unordered_map<CommandType, std::string> type_map = {
+        {CommandType::UNKNOWN, "UNKNOWN"},
         {CommandType::SET, "SET"},
         {CommandType::GET, "GET"},
         {CommandType::DEL, "DEL"},
@@ -33,7 +43,15 @@ std::string Utils::commandTypeToString(CommandType type) {
         {CommandType::TTL, "TTL"},
         {CommandType::INCR, "INCR"},
         {CommandType::DECR, "DECR"},
-        {CommandType::UNKNOWN, "UNKNOWN"}
+        // 哈希命令
+        {CommandType::HSET, "HSET"},
+        {CommandType::HGET, "HGET"},
+        {CommandType::HGETALL, "HGETALL"},
+        {CommandType::HDEL, "HDEL"},
+        {CommandType::HEXISTS, "HEXISTS"},
+        {CommandType::HKEYS, "HKEYS"},
+        {CommandType::HVALS, "HVALS"},
+        {CommandType::HLEN, "HLEN"},
     };
     
     auto it = type_map.find(type);

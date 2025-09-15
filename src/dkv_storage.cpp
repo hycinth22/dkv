@@ -1,5 +1,5 @@
 #include "dkv_storage.hpp"
-#include "dkv_datatype_string.hpp"
+#include "dkv_datatypes.hpp"
 #include <algorithm>
 #include <mutex>
 
@@ -240,11 +240,170 @@ std::unique_ptr<DataItem> StorageEngine::createStringItem(const Value& value, Ti
     return std::make_unique<StringItem>(value, expire_time);
 }
 
+std::unique_ptr<DataItem> StorageEngine::createHashItem() {
+    return std::make_unique<HashItem>();
+}
+
+std::unique_ptr<DataItem> StorageEngine::createHashItem(Timestamp expire_time) {
+    return std::make_unique<HashItem>(expire_time);
+}
+
+bool StorageEngine::hset(const Key& key, const Value& field, const Value& value) {
+    std::unique_lock<std::shared_mutex> lock(mutex_);
+    
+    auto it = data_.find(key);
+    HashItem* hash_item = nullptr;
+    
+    if (it == data_.end() || isKeyExpired(key)) {
+        // 创建新的哈希项
+        data_[key] = createHashItem();
+        hash_item = dynamic_cast<HashItem*>(data_[key].get());
+        total_keys_++;
+    } else {
+        // 检查是否是哈希类型
+        hash_item = dynamic_cast<HashItem*>(it->second.get());
+        if (!hash_item) {
+            return false; // 键存在但不是哈希类型
+        }
+    }
+    
+    return hash_item->setField(field, value);
+}
+
+std::string StorageEngine::hget(const Key& key, const Value& field) {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    
+    auto it = data_.find(key);
+    if (it == data_.end() || isKeyExpired(key)) {
+        return "";
+    }
+    
+    auto* hash_item = dynamic_cast<HashItem*>(it->second.get());
+    if (!hash_item) {
+        return "";
+    }
+    
+    Value value;
+    if (hash_item->getField(field, value)) {
+        return value;
+    }
+    return "";
+}
+
+std::vector<std::pair<Value, Value>> StorageEngine::hgetall(const Key& key) {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    
+    auto it = data_.find(key);
+    if (it == data_.end() || isKeyExpired(key)) {
+        return {};
+    }
+    
+    auto* hash_item = dynamic_cast<HashItem*>(it->second.get());
+    if (!hash_item) {
+        return {};
+    }
+    
+    return hash_item->getAll();
+}
+
+bool StorageEngine::hdel(const Key& key, const Value& field) {
+    std::unique_lock<std::shared_mutex> lock(mutex_);
+    
+    auto it = data_.find(key);
+    if (it == data_.end() || isKeyExpired(key)) {
+        return false;
+    }
+    
+    auto* hash_item = dynamic_cast<HashItem*>(it->second.get());
+    if (!hash_item) {
+        return false;
+    }
+    
+    bool result = hash_item->delField(field);
+    
+    // 如果哈希为空，删除整个键
+    if (hash_item->size() == 0) {
+        data_.erase(it);
+        total_keys_--;
+    }
+    
+    return result;
+}
+
+bool StorageEngine::hexists(const Key& key, const Value& field) {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    
+    auto it = data_.find(key);
+    if (it == data_.end() || isKeyExpired(key)) {
+        return false;
+    }
+    
+    auto* hash_item = dynamic_cast<HashItem*>(it->second.get());
+    if (!hash_item) {
+        return false;
+    }
+    
+    return hash_item->existsField(field);
+}
+
+std::vector<Value> StorageEngine::hkeys(const Key& key) {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    
+    auto it = data_.find(key);
+    if (it == data_.end() || isKeyExpired(key)) {
+        return {};
+    }
+    
+    auto* hash_item = dynamic_cast<HashItem*>(it->second.get());
+    if (!hash_item) {
+        return {};
+    }
+    
+    return hash_item->getKeys();
+}
+
+std::vector<Value> StorageEngine::hvals(const Key& key) {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    
+    auto it = data_.find(key);
+    if (it == data_.end() || isKeyExpired(key)) {
+        return {};
+    }
+    
+    auto* hash_item = dynamic_cast<HashItem*>(it->second.get());
+    if (!hash_item) {
+        return {};
+    }
+    
+    return hash_item->getValues();
+}
+
+size_t StorageEngine::hlen(const Key& key) {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    
+    auto it = data_.find(key);
+    if (it == data_.end() || isKeyExpired(key)) {
+        return 0;
+    }
+    
+    auto* hash_item = dynamic_cast<HashItem*>(it->second.get());
+    if (!hash_item) {
+        return 0;
+    }
+    
+    return hash_item->size();
+}
+
 // DataItemFactory 实现
 std::unique_ptr<DataItem> DataItemFactory::create(DataType type, const std::string& data) {
     switch (type) {
         case DataType::STRING:
             return std::make_unique<StringItem>(data);
+        case DataType::HASH: {
+            auto hash_item = std::make_unique<HashItem>();
+            hash_item->deserialize(data);
+            return hash_item;
+        }
         default:
             return nullptr;
     }
@@ -254,6 +413,11 @@ std::unique_ptr<DataItem> DataItemFactory::create(DataType type, const std::stri
     switch (type) {
         case DataType::STRING:
             return std::make_unique<StringItem>(data, expire_time);
+        case DataType::HASH: {
+            auto hash_item = std::make_unique<HashItem>(expire_time);
+            hash_item->deserialize(data);
+            return hash_item;
+        }
         default:
             return nullptr;
     }

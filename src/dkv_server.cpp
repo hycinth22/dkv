@@ -197,6 +197,93 @@ Response DKVServer::executeCommand(const Command& command) {
             return Response(ResponseStatus::OK, "", std::to_string(ttl));
         }
         
+        // 哈希命令
+        case CommandType::HSET: {
+            if (command.args.size() < 3) {
+                return Response(ResponseStatus::ERROR, "HSET命令需要至少3个参数");
+            }
+            bool success = storage_engine_->hset(command.args[0], command.args[1], command.args[2]);
+            return Response(success ? ResponseStatus::OK : ResponseStatus::ERROR);
+        }
+        
+        case CommandType::HGET: {
+            if (command.args.size() < 2) {
+                return Response(ResponseStatus::ERROR, "HGET命令需要至少2个参数");
+            }
+            std::string value = storage_engine_->hget(command.args[0], command.args[1]);
+            if (value.empty()) {
+                return Response(ResponseStatus::NOT_FOUND);
+            }
+            return Response(ResponseStatus::OK, "", value);
+        }
+        
+        case CommandType::HGETALL: {
+            if (command.args.empty()) {
+                return Response(ResponseStatus::ERROR, "HGETALL命令需要1个参数");
+            }
+            std::vector<std::pair<Value, Value>> all = storage_engine_->hgetall(command.args[0]);
+            
+            // 将结果转换为RESP协议数组格式
+            std::vector<std::string> result;
+            for (const auto& pair : all) {
+                result.push_back(pair.first);
+                result.push_back(pair.second);
+            }
+            
+            Response response;
+            response.status = ResponseStatus::OK;
+            response.data = RESPProtocol::serializeArray(result);
+            return response;
+        }
+        
+        case CommandType::HDEL: {
+            if (command.args.size() < 2) {
+                return Response(ResponseStatus::ERROR, "HDEL命令需要至少2个参数");
+            }
+            bool success = storage_engine_->hdel(command.args[0], command.args[1]);
+            return Response(success ? ResponseStatus::OK : ResponseStatus::ERROR);
+        }
+        
+        case CommandType::HEXISTS: {
+            if (command.args.size() < 2) {
+                return Response(ResponseStatus::ERROR, "HEXISTS命令需要至少2个参数");
+            }
+            bool exists = storage_engine_->hexists(command.args[0], command.args[1]);
+            return Response(ResponseStatus::OK, "", exists ? "1" : "0");
+        }
+        
+        case CommandType::HKEYS: {
+            if (command.args.empty()) {
+                return Response(ResponseStatus::ERROR, "HKEYS命令需要1个参数");
+            }
+            std::vector<Value> keys = storage_engine_->hkeys(command.args[0]);
+            
+            Response response;
+            response.status = ResponseStatus::OK;
+            response.data = RESPProtocol::serializeArray(keys);
+            return response;
+        }
+        
+        case CommandType::HVALS: {
+            if (command.args.empty()) {
+                return Response(ResponseStatus::ERROR, "HVALS命令需要1个参数");
+            }
+            std::vector<Value> values = storage_engine_->hvals(command.args[0]);
+            
+            Response response;
+            response.status = ResponseStatus::OK;
+            response.data = RESPProtocol::serializeArray(values);
+            return response;
+        }
+        
+        case CommandType::HLEN: {
+            if (command.args.empty()) {
+                return Response(ResponseStatus::ERROR, "HLEN命令需要1个参数");
+            }
+            size_t len = storage_engine_->hlen(command.args[0]);
+            return Response(ResponseStatus::OK, "", std::to_string(len));
+        }
+        
         default:
             return Response(ResponseStatus::INVALID_COMMAND);
     }

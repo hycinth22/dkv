@@ -53,12 +53,24 @@ public:
     // 清理过期键
     void cleanupExpiredKeys();
     
+    // 哈希操作
+    bool hset(const Key& key, const Value& field, const Value& value);
+    std::string hget(const Key& key, const Value& field);
+    std::vector<std::pair<Value, Value>> hgetall(const Key& key);
+    bool hdel(const Key& key, const Value& field);
+    bool hexists(const Key& key, const Value& field);
+    std::vector<Value> hkeys(const Key& key);
+    std::vector<Value> hvals(const Key& key);
+    size_t hlen(const Key& key);
+    
 private:
     // 内部辅助方法
     bool isKeyExpired(const Key& key) const;
     void removeExpiredKey(const Key& key);
     std::unique_ptr<DataItem> createStringItem(const Value& value);
     std::unique_ptr<DataItem> createStringItem(const Value& value, Timestamp expire_time);
+    std::unique_ptr<DataItem> createHashItem();
+    std::unique_ptr<DataItem> createHashItem(Timestamp expire_time);
 };
 
 // 数据项工厂

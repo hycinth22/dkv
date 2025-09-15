@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-#include "dkv_datatype.hpp"
+#include "dkv_datatypes.hpp"
 
 namespace dkv {
 
@@ -13,6 +13,8 @@ using Timestamp = std::chrono::system_clock::time_point;
 
 // 命令类型枚举
 enum class CommandType {
+    UNKNOWN = -1
+    // String
     SET = 0,
     GET = 1,
     DEL = 2,
@@ -21,7 +23,15 @@ enum class CommandType {
     TTL = 5,
     INCR = 6,
     DECR = 7,
-    UNKNOWN = -1
+    // 哈希命令
+    HSET = 8,
+    HGET = 9,
+    HGETALL = 10,
+    HDEL = 11,
+    HEXISTS = 12,
+    HKEYS = 13,
+    HVALS = 14,
+    HLEN = 15,
 };
 
 // 响应状态枚举

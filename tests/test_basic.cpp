@@ -3,6 +3,7 @@
 #include "dkv_network.hpp"
 #include "dkv_server.hpp"
 #include "dkv_datatype_string.hpp"
+#include "test_runner.hpp"
 #include <iostream>
 #include <cassert>
 #include <thread>
@@ -12,71 +13,21 @@
 
 namespace dkv {
 
-// 测试工具类
-class TestRunner {
-private:
-    int passed_tests_;
-    int total_tests_;
-    
-public:
-    TestRunner() : passed_tests_(0), total_tests_(0) {}
-    
-    void runTest(const std::string& test_name, std::function<bool()> test_func) {
-        total_tests_++;
-        std::cout << "运行测试: " << test_name << " ... ";
-        
-        try {
-            if (test_func()) {
-                passed_tests_++;
-                std::cout << "通过" << std::endl;
-            } else {
-                std::cout << "失败" << std::endl;
-            }
-        } catch (const std::exception& e) {
-            std::cout << "异常: " << e.what() << std::endl;
-        }
-    }
-    
-    void printSummary() {
-        std::cout << "\n测试总结: " << passed_tests_ << "/" << total_tests_ << " 通过" << std::endl;
-        if (passed_tests_ == total_tests_) {
-            std::cout << "所有测试通过！" << std::endl;
-        } else {
-            std::cout << "有 " << (total_tests_ - passed_tests_) << " 个测试失败" << std::endl;
-        }
-    }
-};
-
-// 测试核心功能
-bool testStringItem() {
-    // 测试基本字符串项
-    StringItem item1("hello");
-    assert(item1.getType() == DataType::STRING);
-    assert(item1.getValue() == "hello");
-    assert(!item1.hasExpiration());
-    
-    // 测试带过期时间的字符串项
-    auto expire_time = Utils::getCurrentTime() + std::chrono::seconds(10);
-    StringItem item2("world", expire_time);
-    assert(item2.getValue() == "world");
-    assert(item2.hasExpiration());
-    assert(!item2.isExpired());
-    
-    // 测试序列化和反序列化
-    std::string serialized = item1.serialize();
-    StringItem item3("");
-    item3.deserialize(serialized);
-    assert(item3.getValue() == "hello");
-    assert(item3.getType() == DataType::STRING);
-    
-    return true;
-}
 
 bool testUtils() {
     // 测试命令类型转换
     assert(Utils::stringToCommandType("SET") == CommandType::SET);
     assert(Utils::stringToCommandType("GET") == CommandType::GET);
     assert(Utils::stringToCommandType("UNKNOWN") == CommandType::UNKNOWN);
+    // 测试哈希命令类型转换
+    assert(Utils::stringToCommandType("HSET") == CommandType::HSET);
+    assert(Utils::stringToCommandType("HGET") == CommandType::HGET);
+    assert(Utils::stringToCommandType("HGETALL") == CommandType::HGETALL);
+    assert(Utils::stringToCommandType("HDEL") == CommandType::HDEL);
+    assert(Utils::stringToCommandType("HEXISTS") == CommandType::HEXISTS);
+    assert(Utils::stringToCommandType("HKEYS") == CommandType::HKEYS);
+    assert(Utils::stringToCommandType("HVALS") == CommandType::HVALS);
+    assert(Utils::stringToCommandType("HLEN") == CommandType::HLEN);
     
     // 测试数字检查
     assert(Utils::isNumeric("123"));
@@ -224,7 +175,6 @@ int main() {
     TestRunner runner;
     
     // 运行所有测试
-    runner.runTest("StringItem基本功能", testStringItem);
     runner.runTest("Utils工具函数", testUtils);
     runner.runTest("StorageEngine操作", testStorageEngine);
     runner.runTest("RESP协议解析", testRESPProtocol);

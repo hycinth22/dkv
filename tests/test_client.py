@@ -26,6 +26,88 @@ def send_command(sock, command):
     print()
     return response
 
+def test_basic(sock):
+    """测试基本命令"""
+    print("=" * 50)
+    print("测试基本命令")
+    print("=" * 50)
+    
+    send_command(sock, "SET test_key hello_world")
+    send_command(sock, "GET test_key")
+    send_command(sock, "EXISTS test_key")
+    send_command(sock, "SET counter 100")
+    send_command(sock, "INCR counter")
+    send_command(sock, "GET counter")
+    send_command(sock, "DECR counter")
+    send_command(sock, "GET counter")
+    send_command(sock, "DEL test_key")
+    send_command(sock, "GET test_key")
+    send_command(sock, "EXISTS test_key")
+
+def test_datatype_string(sock):
+    """测试字符串数据类型相关命令"""
+    print("=" * 50)
+    print("测试字符串数据类型相关命令")
+    print("=" * 50)
+    
+    # 测试过期时间
+    send_command(sock, "SET temp_key temp_value")
+    send_command(sock, "EXPIRE temp_key 2")
+    send_command(sock, "TTL temp_key")
+    send_command(sock, "GET temp_key")
+    
+    print("等待2秒让键过期...")
+    time.sleep(2.5)
+    
+    send_command(sock, "GET temp_key")
+    send_command(sock, "TTL temp_key")
+
+def test_datatype_hash(sock):
+    """测试哈希数据类型相关命令"""
+    print("=" * 50)
+    print("测试哈希数据类型相关命令")
+    print("=" * 50)
+    
+    # 测试HSET和HGET
+    send_command(sock, "HSET user1 name John")
+    send_command(sock, "HSET user1 age 30")
+    send_command(sock, "HSET user1 email john@example.com")
+    send_command(sock, "HGET user1 name")
+    send_command(sock, "HGET user1 age")
+    send_command(sock, "HGET user1 email")
+    
+    # 测试字段不存在的情况
+    send_command(sock, "HGET user1 phone")
+    send_command(sock, "HGET user2 name")
+    
+    # 测试HGETALL
+    send_command(sock, "HGETALL user1")
+    
+    # 测试HDEL
+    send_command(sock, "HDEL user1 email")
+    send_command(sock, "HGET user1 email")
+    
+    # 测试HEXISTS
+    send_command(sock, "HEXISTS user1 name")
+    send_command(sock, "HEXISTS user1 email")
+    
+    # 测试HKEYS和HVALS
+    send_command(sock, "HKEYS user1")
+    send_command(sock, "HVALS user1")
+    
+    # 测试HLEN
+    send_command(sock, "HLEN user1")
+    send_command(sock, "HLEN user2")
+    
+    # 测试更新字段
+    send_command(sock, "HSET user1 name Mike")
+    send_command(sock, "HGET user1 name")
+    
+    # 测试删除整个哈希键
+    send_command(sock, "DEL user1")
+    send_command(sock, "EXISTS user1")
+    send_command(sock, "HGETALL user1")
+
 def test_dkv_server():
     """测试DKV服务器"""
     try:
@@ -33,34 +115,13 @@ def test_dkv_server():
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.connect(('localhost', 6379))
         print("已连接到DKV服务器")
-        print("=" * 50)
         
-        # 测试基本命令
-        send_command(sock, "SET test_key hello_world")
-        send_command(sock, "GET test_key")
-        send_command(sock, "EXISTS test_key")
-        send_command(sock, "SET counter 100")
-        send_command(sock, "INCR counter")
-        send_command(sock, "GET counter")
-        send_command(sock, "DECR counter")
-        send_command(sock, "GET counter")
-        send_command(sock, "DEL test_key")
-        send_command(sock, "GET test_key")
-        send_command(sock, "EXISTS test_key")
+        # 运行不同类型的测试
+        test_basic(sock)
+        test_datatype_string(sock)
+        test_datatype_hash(sock)
         
-        # 测试过期时间
-        send_command(sock, "SET temp_key temp_value")
-        send_command(sock, "EXPIRE temp_key 2")
-        send_command(sock, "TTL temp_key")
-        send_command(sock, "GET temp_key")
-        
-        print("等待2秒让键过期...")
-        time.sleep(2.5)
-        
-        send_command(sock, "GET temp_key")
-        send_command(sock, "TTL temp_key")
-        
-        print("测试完成！")
+        print("所有测试完成！")
         
     except ConnectionRefusedError:
         print("无法连接到DKV服务器，请确保服务器正在运行")
