@@ -1,5 +1,6 @@
 #include "dkv_storage.hpp"
 #include "dkv_datatypes.hpp"
+#include "dkv_memory_allocator.hpp"
 #include <algorithm>
 #include <mutex>
 
@@ -199,6 +200,18 @@ uint64_t StorageEngine::getTotalKeys() const {
 
 uint64_t StorageEngine::getExpiredKeys() const {
     return expired_keys_.load();
+}
+
+size_t StorageEngine::getCurrentMemoryUsage() const {
+    return MemoryAllocator::getInstance().getCurrentUsage();
+}
+
+void StorageEngine::resetMemoryStats() {
+    MemoryAllocator::getInstance().resetStats();
+}
+
+std::string StorageEngine::getMemoryStats() const {
+    return MemoryAllocator::getInstance().getStats();
 }
 
 void StorageEngine::cleanupExpiredKeys() {

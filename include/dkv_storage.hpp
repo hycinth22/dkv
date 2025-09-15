@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dkv_core.hpp"
+#include "dkv_memory_allocator.hpp"
 #include <unordered_map>
 #include <shared_mutex>
 #include <memory>
@@ -17,6 +18,18 @@ private:
     // 统计信息
     std::atomic<uint64_t> total_keys_{0};
     std::atomic<uint64_t> expired_keys_{0};
+    
+    // 内存使用统计
+    std::atomic<size_t> memory_usage_;
+    
+    // 获取内存使用量
+    size_t getCurrentMemoryUsage() const;
+    
+    // 重置内存统计
+    void resetMemoryStats();
+    
+    // 打印内存使用详情
+    std::string getMemoryStats() const;
 
 public:
     StorageEngine() = default;

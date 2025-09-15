@@ -23,6 +23,7 @@ private:
     // 配置参数
     int port_;
     std::string config_file_;
+    size_t max_memory_; // 最大内存限制（字节）
 
 public:
     DKVServer(int port = 6379);
@@ -35,6 +36,7 @@ public:
     // 配置管理
     bool loadConfig(const std::string& config_file);
     void setPort(int port);
+    void setMaxMemory(size_t max_memory);
     
     // 统计信息
     size_t getKeyCount() const;
@@ -46,6 +48,12 @@ public:
     
     // 执行命令
     Response executeCommand(const Command& command);
+    
+    // 获取内存使用量
+    size_t getMemoryUsage() const;
+    
+    // 获取最大内存限制
+    size_t getMaxMemory() const;
     
 private:
     // 初始化服务器

@@ -1,4 +1,5 @@
 #include "dkv_server.hpp"
+#include "dkv_memory_allocator.hpp"
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -7,7 +8,7 @@
 namespace dkv {
 
 DKVServer::DKVServer(int port) 
-    : port_(port), running_(false), cleanup_running_(false) {
+    : port_(port), running_(false), cleanup_running_(false), max_memory_(0) {
 }
 
 DKVServer::~DKVServer() {
@@ -72,6 +73,10 @@ void DKVServer::setPort(int port) {
     port_ = port;
 }
 
+void DKVServer::setMaxMemory(size_t max_memory) {
+    max_memory_ = max_memory;
+}
+
 size_t DKVServer::getKeyCount() const {
     return storage_engine_ ? storage_engine_->size() : 0;
 }
@@ -86,6 +91,14 @@ uint64_t DKVServer::getExpiredKeys() const {
 
 bool DKVServer::isRunning() const {
     return running_.load();
+}
+
+size_t DKVServer::getMemoryUsage() const {
+    return dkv::MemoryAllocator::getInstance().getCurrentUsage();
+}
+
+size_t DKVServer::getMaxMemory() const {
+    return max_memory_;
 }
 
 bool DKVServer::initialize() {
@@ -103,6 +116,31 @@ bool DKVServer::initialize() {
 Response DKVServer::executeCommand(const Command& command) {
     if (!storage_engine_) {
         return Response(ResponseStatus::ERROR, "Storage engine not initialized");
+    }
+    
+    // 检查是否是可能分配内存的命令
+    bool mayAllocateMemory = true;
+    switch (command.type) {
+        // readonly list
+        case CommandType::GET:
+        case CommandType::EXISTS:
+        case CommandType::SCARD:
+        case CommandType::DBSIZE:
+        case CommandType::INFO:
+        case CommandType::SHUTDOWN:
+            mayAllocateMemory = false;
+            break;
+        default:
+            mayAllocateMemory = true;
+            break;
+    }
+    
+    // 如果是可能分配内存的命令，且设置了最大内存限制，则检查内存使用情况
+    if (mayAllocateMemory && max_memory_ > 0) {
+        size_t currentUsage = getMemoryUsage();
+        if (currentUsage >= max_memory_) {
+            return Response(ResponseStatus::ERROR, "OOM command not allowed when used memory > 'maxmemory'");
+        }
     }
     
     switch (command.type) {
@@ -412,6 +450,17 @@ Response DKVServer::executeCommand(const Command& command) {
             info += "expired_keys:" + std::to_string(getExpiredKeys()) + "\r\n";
             info += "current_keys:" + std::to_string(getKeyCount()) + "\r\n";
             info += "version:1.0.0\r\n";
+            info += "used_memory:" + std::to_string(getMemoryUsage()) + "\r\n";
+            info += "max_memory:" + std::to_string(getMaxMemory()) + "\r\n";
+            
+            // 详细内存统计信息，按行分割并添加到响应中
+            std::string memory_stats = dkv::MemoryAllocator::getInstance().getStats();
+            std::istringstream stats_stream(memory_stats);
+            std::string line;
+            while (std::getline(stats_stream, line)) {
+                info += line + "\r\n";
+            }
+            
             return Response(ResponseStatus::OK, "", info);
         }
         
@@ -464,6 +513,8 @@ bool DKVServer::parseConfigFile(const std::string& config_file) {
         if (iss >> key >> value) {
             if (key == "port") {
                 port_ = std::stoi(value);
+            } else if (key == "maxmemory") {
+                max_memory_ = std::stoull(value);
             }
             // 可以在这里添加更多配置选项
         }
