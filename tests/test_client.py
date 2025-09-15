@@ -145,6 +145,54 @@ def test_datatype_list(sock):
     send_command(sock, "DEL mylist")
     send_command(sock, "EXISTS mylist")
 
+def test_datatype_set(sock):
+    """测试集合数据类型相关命令"""
+    print("=" * 50)
+    print("测试集合数据类型相关命令")
+    print("=" * 50)
+    
+    # 测试SADD - 添加单个元素
+    send_command(sock, "SADD myset a")
+    send_command(sock, "SADD myset b")
+    send_command(sock, "SADD myset c")
+    
+    # 测试SADD - 添加多个元素
+    send_command(sock, "SADD myset d e")
+    
+    # 测试SADD - 添加已存在的元素
+    send_command(sock, "SADD myset a")
+    
+    # 测试SCARD - 获取集合大小
+    send_command(sock, "SCARD myset")
+    
+    # 测试SISMEMBER - 检查元素是否存在
+    send_command(sock, "SISMEMBER myset a")
+    send_command(sock, "SISMEMBER myset z")
+    
+    # 测试SMEMBERS - 获取所有元素
+    send_command(sock, "SMEMBERS myset")
+    
+    # 测试SREM - 删除单个元素
+    send_command(sock, "SREM myset a")
+    send_command(sock, "SCARD myset")
+    send_command(sock, "SISMEMBER myset a")
+    
+    # 测试SREM - 删除多个元素
+    send_command(sock, "SREM myset b c")
+    send_command(sock, "SCARD myset")
+    
+    # 测试SREM - 删除不存在的元素
+    send_command(sock, "SREM myset z")
+    
+    # 测试空集合
+    send_command(sock, "SCARD non_existent_set")
+    send_command(sock, "SISMEMBER non_existent_set a")
+    send_command(sock, "SMEMBERS non_existent_set")
+    
+    # 测试删除整个集合键
+    send_command(sock, "DEL myset")
+    send_command(sock, "EXISTS myset")
+
 def test_dkv_server():
     """测试DKV服务器"""
     try:
@@ -158,6 +206,7 @@ def test_dkv_server():
         test_datatype_string(sock)
         test_datatype_hash(sock)
         test_datatype_list(sock)
+        test_datatype_set(sock)
         
         print("所有测试完成！")
         

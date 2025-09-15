@@ -71,6 +71,13 @@ public:
     size_t llen(const Key& key);
     std::vector<Value> lrange(const Key& key, size_t start, size_t stop);
     
+    // 集合操作
+    size_t sadd(const Key& key, const std::vector<Value>& members);
+    size_t srem(const Key& key, const std::vector<Value>& members);
+    std::vector<Value> smembers(const Key& key);
+    bool sismember(const Key& key, const Value& member) const;
+    size_t scard(const Key& key) const;
+    
 private:
     // 内部辅助方法
     bool isKeyExpired(const Key& key) const;
@@ -81,6 +88,8 @@ private:
     std::unique_ptr<DataItem> createHashItem(Timestamp expire_time);
     std::unique_ptr<DataItem> createListItem();
     std::unique_ptr<DataItem> createListItem(Timestamp expire_time);
+    std::unique_ptr<DataItem> createSetItem();
+    std::unique_ptr<DataItem> createSetItem(Timestamp expire_time);
 };
 
 // 数据项工厂

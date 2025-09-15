@@ -39,6 +39,12 @@ enum class CommandType {
     RPOP = 19,
     LLEN = 20,
     LRANGE = 21,
+    // 集合命令
+    SADD = 22,
+    SREM = 23,
+    SMEMBERS = 24,
+    SISMEMBER = 25,
+    SCARD = 26,
 };
 
 // 响应状态枚举

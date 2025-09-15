@@ -256,6 +256,14 @@ std::unique_ptr<DataItem> StorageEngine::createListItem(Timestamp expire_time) {
     return std::make_unique<ListItem>(expire_time);
 }
 
+std::unique_ptr<DataItem> StorageEngine::createSetItem() {
+    return std::make_unique<SetItem>();
+}
+
+std::unique_ptr<DataItem> StorageEngine::createSetItem(Timestamp expire_time) {
+    return std::make_unique<SetItem>(expire_time);
+}
+
 bool StorageEngine::hset(const Key& key, const Value& field, const Value& value) {
     std::unique_lock<std::shared_mutex> lock(mutex_);
     
@@ -545,6 +553,11 @@ std::unique_ptr<DataItem> DataItemFactory::create(DataType type, const std::stri
             list_item->deserialize(data);
             return list_item;
         }
+        case DataType::SET: {
+            auto set_item = std::make_unique<SetItem>();
+            set_item->deserialize(data);
+            return set_item;
+        }
         default:
             return nullptr;
     }
@@ -564,9 +577,111 @@ std::unique_ptr<DataItem> DataItemFactory::create(DataType type, const std::stri
             list_item->deserialize(data);
             return list_item;
         }
+        case DataType::SET: {
+            auto set_item = std::make_unique<SetItem>(expire_time);
+            set_item->deserialize(data);
+            return set_item;
+        }
         default:
             return nullptr;
     }
+}
+
+size_t StorageEngine::sadd(const Key& key, const std::vector<Value>& members) {
+    std::unique_lock<std::shared_mutex> lock(mutex_);
+    
+    auto it = data_.find(key);
+    SetItem* set_item = nullptr;
+    
+    if (it == data_.end() || isKeyExpired(key)) {
+        // 创建新的集合项
+        data_[key] = createSetItem();
+        set_item = dynamic_cast<SetItem*>(data_[key].get());
+        total_keys_++;
+    } else {
+        // 检查是否是集合类型
+        set_item = dynamic_cast<SetItem*>(it->second.get());
+        if (!set_item) {
+            return 0; // 键存在但不是集合类型
+        }
+    }
+    
+    // 添加多个元素并返回成功添加的个数
+    return set_item->sadd(members);
+}
+
+size_t StorageEngine::srem(const Key& key, const std::vector<Value>& members) {
+    std::unique_lock<std::shared_mutex> lock(mutex_);
+    
+    auto it = data_.find(key);
+    if (it == data_.end() || isKeyExpired(key)) {
+        return 0; // 键不存在
+    }
+    
+    // 检查是否是集合类型
+    SetItem* set_item = dynamic_cast<SetItem*>(it->second.get());
+    if (!set_item) {
+        return 0; // 键存在但不是集合类型
+    }
+    
+    // 删除多个元素并返回成功删除的个数
+    size_t removed_count = set_item->srem(members);
+    
+    // 如果集合为空，删除整个键
+    if (set_item->empty()) {
+        data_.erase(it);
+        total_keys_--;
+    }
+    
+    return removed_count;
+}
+
+std::vector<Value> StorageEngine::smembers(const Key& key) {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    
+    auto it = data_.find(key);
+    if (it == data_.end() || isKeyExpired(key)) {
+        return {};
+    }
+    
+    auto* set_item = dynamic_cast<SetItem*>(it->second.get());
+    if (!set_item) {
+        return {};
+    }
+    
+    return set_item->smembers();
+}
+
+bool StorageEngine::sismember(const Key& key, const Value& member) const {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    
+    auto it = data_.find(key);
+    if (it == data_.end() || isKeyExpired(key)) {
+        return false;
+    }
+    
+    auto* set_item = dynamic_cast<SetItem*>(it->second.get());
+    if (!set_item) {
+        return false;
+    }
+    
+    return set_item->sismember(member);
+}
+
+size_t StorageEngine::scard(const Key& key) const {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    
+    auto it = data_.find(key);
+    if (it == data_.end() || isKeyExpired(key)) {
+        return 0;
+    }
+    
+    auto* set_item = dynamic_cast<SetItem*>(it->second.get());
+    if (!set_item) {
+        return 0;
+    }
+    
+    return set_item->scard();
 }
 
 } // namespace dkv

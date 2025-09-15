@@ -26,6 +26,12 @@ CommandType Utils::stringToCommandType(const std::string& cmd) {
         {"HKEYS", CommandType::HKEYS},
         {"HVALS", CommandType::HVALS},
         {"HLEN", CommandType::HLEN},
+        // 集合命令
+        {"SADD", CommandType::SADD},
+        {"SREM", CommandType::SREM},
+        {"SMEMBERS", CommandType::SMEMBERS},
+        {"SISMEMBER", CommandType::SISMEMBER},
+        {"SCARD", CommandType::SCARD},
     };
     
     auto it = command_map.find(cmd);
@@ -52,6 +58,12 @@ std::string Utils::commandTypeToString(CommandType type) {
         {CommandType::HKEYS, "HKEYS"},
         {CommandType::HVALS, "HVALS"},
         {CommandType::HLEN, "HLEN"},
+        // 集合命令
+        {CommandType::SADD, "SADD"},
+        {CommandType::SREM, "SREM"},
+        {CommandType::SMEMBERS, "SMEMBERS"},
+        {CommandType::SISMEMBER, "SISMEMBER"},
+        {CommandType::SCARD, "SCARD"},
     };
     
     auto it = type_map.find(type);

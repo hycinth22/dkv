@@ -349,6 +349,53 @@ Response DKVServer::executeCommand(const Command& command) {
             }
         }
         
+        // 集合命令
+        case CommandType::SADD: {
+            if (command.args.size() < 2) {
+                return Response(ResponseStatus::ERROR, "SADD命令需要至少2个参数");
+            }
+            std::vector<Value> members(command.args.begin() + 1, command.args.end());
+            size_t addedCount = storage_engine_->sadd(command.args[0], members);
+            return Response(ResponseStatus::OK, "", std::to_string(addedCount));
+        }
+        
+        case CommandType::SREM: {
+            if (command.args.size() < 2) {
+                return Response(ResponseStatus::ERROR, "SREM命令需要至少2个参数");
+            }
+            std::vector<Value> members(command.args.begin() + 1, command.args.end());
+            size_t removedCount = storage_engine_->srem(command.args[0], members);
+            return Response(ResponseStatus::OK, "", std::to_string(removedCount));
+        }
+        
+        case CommandType::SMEMBERS: {
+            if (command.args.empty()) {
+                return Response(ResponseStatus::ERROR, "SMEMBERS命令需要1个参数");
+            }
+            std::vector<Value> members = storage_engine_->smembers(command.args[0]);
+            
+            Response response;
+            response.status = ResponseStatus::OK;
+            response.data = RESPProtocol::serializeArray(members);
+            return response;
+        }
+        
+        case CommandType::SISMEMBER: {
+            if (command.args.size() < 2) {
+                return Response(ResponseStatus::ERROR, "SISMEMBER命令需要至少2个参数");
+            }
+            bool is_member = storage_engine_->sismember(command.args[0], command.args[1]);
+            return Response(ResponseStatus::OK, "", is_member ? "1" : "0");
+        }
+        
+        case CommandType::SCARD: {
+            if (command.args.empty()) {
+                return Response(ResponseStatus::ERROR, "SCARD命令需要1个参数");
+            }
+            size_t count = storage_engine_->scard(command.args[0]);
+            return Response(ResponseStatus::OK, "", std::to_string(count));
+        }
+        
         default:
             return Response(ResponseStatus::INVALID_COMMAND);
     }
