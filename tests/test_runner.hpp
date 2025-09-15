@@ -37,7 +37,9 @@ public:
         if (passed_tests_ == total_tests_) {
             std::cout << "所有测试通过！" << std::endl;
         } else {
-            std::cout << "有 " << (total_tests_ - passed_tests_) << " 个测试失败" << std::endl;
+            int failed = total_tests_ - passed_tests_;
+            std::cout << "有 " << failed << " 个测试失败" << std::endl;
+            exit(failed);
         }
     }
 };
