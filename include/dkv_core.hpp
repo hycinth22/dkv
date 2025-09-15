@@ -50,6 +50,8 @@ enum class CommandType {
     DBSIZE = 28,
     INFO = 29,
     SHUTDOWN = 30,
+    SAVE = 31,
+    BGSAVE = 32,
 };
 
 // 响应状态枚举

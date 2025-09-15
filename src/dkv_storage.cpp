@@ -228,6 +228,18 @@ void StorageEngine::cleanupExpiredKeys() {
     }
 }
 
+// 保存数据到RDB文件
+bool StorageEngine::saveRDB(const std::string& filename) {
+    RDBPersistence rdb;
+    return rdb.saveToFile(this, filename);
+}
+
+// 从RDB文件加载数据
+bool StorageEngine::loadRDB(const std::string& filename) {
+    RDBPersistence rdb;
+    return rdb.loadFromFile(this, filename);
+}
+
 bool StorageEngine::isKeyExpired(const Key& key) const {
     auto it = data_.find(key);
     if (it == data_.end()) {
@@ -695,6 +707,17 @@ size_t StorageEngine::scard(const Key& key) const {
     }
     
     return set_item->scard();
+}
+
+DataItem* StorageEngine::getDataItem(const Key& key) {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    
+    auto it = data_.find(key);
+    if (it == data_.end() || isKeyExpired(key)) {
+        return nullptr;
+    }
+    
+    return it->second.get();
 }
 
 } // namespace dkv

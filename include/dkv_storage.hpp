@@ -2,6 +2,7 @@
 
 #include "dkv_core.hpp"
 #include "dkv_memory_allocator.hpp"
+#include "dkv_rdb.hpp"
 #include <unordered_map>
 #include <shared_mutex>
 #include <memory>
@@ -66,6 +67,10 @@ public:
     // 清理过期键
     void cleanupExpiredKeys();
     
+    // RDB持久化
+    bool saveRDB(const std::string& filename);
+    bool loadRDB(const std::string& filename);
+    
     // 哈希操作
     bool hset(const Key& key, const Value& field, const Value& value);
     std::string hget(const Key& key, const Value& field);
@@ -90,6 +95,9 @@ public:
     std::vector<Value> smembers(const Key& key);
     bool sismember(const Key& key, const Value& member) const;
     size_t scard(const Key& key) const;
+    
+    // 获取数据项
+    DataItem* getDataItem(const Key& key);
     
 private:
     // 内部辅助方法

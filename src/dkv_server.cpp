@@ -9,7 +9,9 @@ namespace dkv {
 
 DKVServer::DKVServer(int port, size_t num_sub_reactors, size_t num_workers) 
     : running_(false), cleanup_running_(false), 
-      port_(port), max_memory_(0), num_sub_reactors_(num_sub_reactors), num_workers_(num_workers) {
+      port_(port), max_memory_(0), num_sub_reactors_(num_sub_reactors), num_workers_(num_workers),
+      enable_rdb_(true), rdb_filename_("dump.rdb"), rdb_save_interval_(3600), rdb_save_changes_(1000),
+      rdb_changes_(0), last_save_time_(std::chrono::system_clock::now()), rdb_save_running_(false) {
 }
 
 DKVServer::~DKVServer() {
@@ -25,11 +27,20 @@ bool DKVServer::start() {
         return false;
     }
     
+    // 尝试从RDB文件加载数据
+    loadRDBFromConfig();
+    
     running_ = true;
     cleanup_running_ = true;
     
     // 启动清理线程
     cleanup_thread_ = std::thread(&DKVServer::cleanupExpiredKeys, this);
+    
+    // 启动RDB自动保存线程
+    if (enable_rdb_) {
+        rdb_save_running_ = false;
+        rdb_save_thread_ = std::thread(&DKVServer::rdbAutoSaveThread, this);
+    }
     
     // 启动网络服务器
     if (!network_server_->start()) {
@@ -42,6 +53,29 @@ bool DKVServer::start() {
     return true;
 }
 
+void DKVServer::loadRDBFromConfig() {
+    // 检查是否启用了RDB持久化
+    if (!enable_rdb_) {
+        std::cout << "RDB持久化已禁用" << std::endl;
+        return;
+    }
+    
+    // 使用配置的RDB文件名
+    std::string rdb_file = rdb_filename_;
+    
+    if (storage_engine_ && !rdb_file.empty()) {
+        if (!storage_engine_->loadRDB(rdb_file)) {
+            std::cout << "警告：无法加载RDB文件 " << rdb_file << "，可能是文件不存在或格式不正确" << std::endl;
+        } else {
+            std::cout << "成功从RDB文件 " << rdb_file << " 加载数据" << std::endl;
+            
+            // 更新上次保存时间和重置变更计数
+            last_save_time_ = std::chrono::system_clock::now();
+            rdb_changes_ = 0;
+        }
+    }
+}
+
 void DKVServer::stop() {
     if (!running_.load()) {
         return;
@@ -49,6 +83,9 @@ void DKVServer::stop() {
     
     running_ = false;
     cleanup_running_ = false;
+    
+    // 保存数据到RDB文件
+    saveRDBFromConfig();
     
     // 等待工作线程结束
     std::cout << "等待工作线程结束" << std::endl;
@@ -68,7 +105,37 @@ void DKVServer::stop() {
         cleanup_thread_.join();
     }
     
+    // 停止RDB自动保存线程
+    std::cout << "等待RDB自动保存线程结束" << std::endl;
+    rdb_save_running_ = false;
+    if (rdb_save_thread_.joinable()) {
+        rdb_save_thread_.join();
+    }
+    
     std::cout << "DKV服务已停止" << std::endl;
+}
+
+void DKVServer::saveRDBFromConfig() {
+    // 检查是否启用了RDB持久化
+    if (!enable_rdb_) {
+        std::cout << "RDB持久化已禁用" << std::endl;
+        return;
+    }
+    
+    // 使用配置的RDB文件名
+    std::string rdb_file = rdb_filename_;
+    
+    if (storage_engine_ && !rdb_file.empty()) {
+        if (!storage_engine_->saveRDB(rdb_file)) {
+            std::cerr << "警告：无法保存RDB文件 " << rdb_file << std::endl;
+        } else {
+            std::cout << "成功将数据保存到RDB文件 " << rdb_file << std::endl;
+            
+            // 更新上次保存时间和重置变更计数
+                last_save_time_ = std::chrono::system_clock::now();
+                rdb_changes_ = 0;
+        }
+    }
 }
 
 bool DKVServer::loadConfig(const std::string& config_file) {
@@ -106,6 +173,23 @@ size_t DKVServer::getMemoryUsage() const {
 
 size_t DKVServer::getMaxMemory() const {
     return max_memory_;
+}
+
+// RDB持久化配置方法实现
+void DKVServer::setRDBEnabled(bool enabled) {
+    enable_rdb_ = enabled;
+}
+
+void DKVServer::setRDBFilename(const std::string& filename) {
+    rdb_filename_ = filename;
+}
+
+void DKVServer::setRDBSaveInterval(uint64_t interval) {
+    rdb_save_interval_ = interval;
+}
+
+void DKVServer::setRDBSaveChanges(uint64_t changes) {
+    rdb_save_changes_ = changes;
 }
 
 bool DKVServer::initialize() {
@@ -175,6 +259,11 @@ Response DKVServer::executeCommand(const Command& command) {
             } else {
                 success = storage_engine_->set(command.args[0], command.args[1]);
             }
+            
+            if (success) {
+                incDirty();
+            }
+            
             return Response(success ? ResponseStatus::OK : ResponseStatus::ERROR);
         }
         
@@ -194,6 +283,11 @@ Response DKVServer::executeCommand(const Command& command) {
                 return Response(ResponseStatus::ERROR, "DEL命令需要1个参数");
             }
             bool success = storage_engine_->del(command.args[0]);
+            
+            if (success) {
+                incDirty();
+            }
+            
             return Response(success ? ResponseStatus::OK : ResponseStatus::ERROR);
         }
         
@@ -210,6 +304,7 @@ Response DKVServer::executeCommand(const Command& command) {
                 return Response(ResponseStatus::ERROR, "INCR命令需要1个参数");
             }
             int64_t value = storage_engine_->incr(command.args[0]);
+            incDirty();
             return Response(ResponseStatus::OK, "", std::to_string(value));
         }
         
@@ -218,6 +313,7 @@ Response DKVServer::executeCommand(const Command& command) {
                 return Response(ResponseStatus::ERROR, "DECR命令需要1个参数");
             }
             int64_t value = storage_engine_->decr(command.args[0]);
+            incDirty();
             return Response(ResponseStatus::OK, "", std::to_string(value));
         }
         
@@ -228,6 +324,11 @@ Response DKVServer::executeCommand(const Command& command) {
             try {
                 int64_t seconds = std::stoll(command.args[1]);
                 bool success = storage_engine_->expire(command.args[0], seconds);
+                
+                if (success) {
+                    incDirty();
+                }
+                
                 return Response(success ? ResponseStatus::OK : ResponseStatus::ERROR);
             } catch (const std::invalid_argument&) {
                 return Response(ResponseStatus::ERROR, "无效的过期时间");
@@ -248,6 +349,11 @@ Response DKVServer::executeCommand(const Command& command) {
                 return Response(ResponseStatus::ERROR, "HSET命令需要至少3个参数");
             }
             bool success = storage_engine_->hset(command.args[0], command.args[1], command.args[2]);
+            
+            if (success) {
+                incDirty();
+            }
+            
             return Response(success ? ResponseStatus::OK : ResponseStatus::ERROR);
         }
         
@@ -286,6 +392,11 @@ Response DKVServer::executeCommand(const Command& command) {
                 return Response(ResponseStatus::ERROR, "HDEL命令需要至少2个参数");
             }
             bool success = storage_engine_->hdel(command.args[0], command.args[1]);
+            
+            if (success) {
+                incDirty();
+            }
+            
             return Response(success ? ResponseStatus::OK : ResponseStatus::ERROR);
         }
         
@@ -335,6 +446,7 @@ Response DKVServer::executeCommand(const Command& command) {
                 return Response(ResponseStatus::ERROR, "LPUSH命令需要至少2个参数");
             }
             size_t len = storage_engine_->lpush(command.args[0], command.args[1]);
+            incDirty();
             return Response(ResponseStatus::OK, "", std::to_string(len));
         }
         
@@ -343,6 +455,7 @@ Response DKVServer::executeCommand(const Command& command) {
                 return Response(ResponseStatus::ERROR, "RPUSH命令需要至少2个参数");
             }
             size_t len = storage_engine_->rpush(command.args[0], command.args[1]);
+            incDirty();
             return Response(ResponseStatus::OK, "", std::to_string(len));
         }
         
@@ -354,6 +467,8 @@ Response DKVServer::executeCommand(const Command& command) {
             if (value.empty()) {
                 return Response(ResponseStatus::NOT_FOUND);
             }
+            
+            incDirty();
             return Response(ResponseStatus::OK, "", value);
         }
         
@@ -365,6 +480,8 @@ Response DKVServer::executeCommand(const Command& command) {
             if (value.empty()) {
                 return Response(ResponseStatus::NOT_FOUND);
             }
+            
+            incDirty();
             return Response(ResponseStatus::OK, "", value);
         }
         
@@ -401,6 +518,11 @@ Response DKVServer::executeCommand(const Command& command) {
             }
             std::vector<Value> members(command.args.begin() + 1, command.args.end());
             size_t addedCount = storage_engine_->sadd(command.args[0], members);
+            
+            if (addedCount > 0) {
+                incDirty();
+            }
+            
             return Response(ResponseStatus::OK, "", std::to_string(addedCount));
         }
         
@@ -410,6 +532,11 @@ Response DKVServer::executeCommand(const Command& command) {
             }
             std::vector<Value> members(command.args.begin() + 1, command.args.end());
             size_t removedCount = storage_engine_->srem(command.args[0], members);
+            
+            if (removedCount > 0) {
+                incDirty();
+            }
+            
             return Response(ResponseStatus::OK, "", std::to_string(removedCount));
         }
         
@@ -443,6 +570,7 @@ Response DKVServer::executeCommand(const Command& command) {
         
         case CommandType::FLUSHDB: {
             storage_engine_->flush();
+            incDirty();
             return Response(ResponseStatus::OK, "OK");
         }
         
@@ -480,6 +608,48 @@ Response DKVServer::executeCommand(const Command& command) {
             });
             shutdown_thread.detach();
             return Response(ResponseStatus::OK, "Shutting down...");
+        }
+        
+        // RDB持久化命令
+        case CommandType::SAVE: {
+            // 检查是否启用了RDB持久化
+            if (!enable_rdb_) {
+                return Response(ResponseStatus::ERROR, "RDB持久化已禁用");
+            }
+            
+            // 同步保存数据到RDB文件
+            bool success = storage_engine_->saveRDB(rdb_filename_);
+            
+            if (success) {
+                // 更新上次保存时间和重置变更计数
+                last_save_time_ = std::chrono::system_clock::now();
+                rdb_changes_ = 0;
+            }
+            
+            return Response(success ? ResponseStatus::OK : ResponseStatus::ERROR);
+        }
+        
+        case CommandType::BGSAVE: {
+            // 检查是否启用了RDB持久化
+            if (!enable_rdb_) {
+                return Response(ResponseStatus::ERROR, "RDB持久化已禁用");
+            }
+            
+            // 异步保存数据到RDB文件
+            std::thread save_thread([this]() {
+                bool success = storage_engine_->saveRDB(rdb_filename_);
+                
+                if (success) {
+                    // 更新上次保存时间和重置变更计数
+                    last_save_time_ = std::chrono::system_clock::now();
+                    rdb_changes_ = 0;
+                    std::cout << "异步RDB保存成功" << std::endl;
+                } else {
+                    std::cerr << "异步RDB保存失败" << std::endl;
+                }
+            });
+            save_thread.detach();
+            return Response(ResponseStatus::OK, "Background saving started");
         }
         
         default:
@@ -522,12 +692,61 @@ bool DKVServer::parseConfigFile(const std::string& config_file) {
                 port_ = std::stoi(value);
             } else if (key == "maxmemory") {
                 max_memory_ = std::stoull(value);
+            } else if (key == "enable_rdb") {
+                enable_rdb_ = (value == "yes" || value == "true" || value == "1");
+            } else if (key == "rdb_filename") {
+                rdb_filename_ = value;
+            } else if (key == "rdb_save_interval") {
+                rdb_save_interval_ = std::stoull(value);
+            } else if (key == "rdb_save_changes") {
+                rdb_save_changes_ = std::stoull(value);
             }
-            // 可以在这里添加更多配置选项
         }
     }
     
     return true;
+}
+
+void DKVServer::incDirty() {
+    rdb_changes_++;
+}
+
+void DKVServer::incDirty(int delta) {
+    rdb_changes_ += delta;
+}
+
+void DKVServer::rdbAutoSaveThread() {
+    // 实现自动保存线程逻辑
+    while (running_) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        
+        if (!enable_rdb_ || rdb_save_running_ || rdb_save_interval_ <= 0) {
+            continue;
+        }
+        
+        auto now = std::chrono::system_clock::now();
+        auto now_seconds = std::chrono::duration_cast<std::chrono::seconds>(
+            now.time_since_epoch()).count();
+        auto last_save_seconds = std::chrono::duration_cast<std::chrono::seconds>(
+            last_save_time_.load().time_since_epoch()).count();
+        
+        // 检查是否达到自动保存条件
+        if ((rdb_changes_ >= rdb_save_changes_) && 
+            (static_cast<uint64_t>(now_seconds - last_save_seconds) >= rdb_save_interval_)) {
+            
+            rdb_save_running_ = true;
+            
+            if (storage_engine_->saveRDB(rdb_filename_)) {
+                last_save_time_ = now;
+                rdb_changes_ = 0;
+                std::cout << "自动保存RDB文件成功" << std::endl;
+            } else {
+                std::cerr << "自动保存RDB文件失败" << std::endl;
+            }
+            
+            rdb_save_running_ = false;
+        }
+    }
 }
 
 } // namespace dkv

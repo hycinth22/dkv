@@ -59,6 +59,10 @@ target_link_libraries(test_memory_allocator dkv_lib)
 add_executable(test_maxmemory tests/test_maxmemory.cpp)
 target_link_libraries(test_maxmemory dkv_lib)
 
+add_executable(test_rdb tests/test_rdb.cpp)
+target_link_libraries(test_rdb dkv_lib)
+
+
 # 启用测试
 enable_testing()
 add_test(NAME basic_tests COMMAND test_basic)
@@ -69,6 +73,7 @@ add_test(NAME datatype_set_tests COMMAND test_datatype_set)
 add_test(NAME server_management_tests COMMAND test_server_management)
 add_test(NAME memory_allocator_tests COMMAND test_memory_allocator)
 add_test(NAME maxmemory_tests COMMAND test_maxmemory)
+add_test(NAME rdb_tests COMMAND test_rdb)
 
 # 安装规则
 install(TARGETS dkv_server DESTINATION bin)
