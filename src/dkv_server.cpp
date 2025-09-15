@@ -1,0 +1,246 @@
+#include "dkv_server.hpp"
+#include <iostream>
+#include <fstream>
+#include <sstream>
+#include <chrono>
+
+namespace dkv {
+
+DKVServer::DKVServer(int port) 
+    : port_(port), running_(false), cleanup_running_(false) {
+}
+
+DKVServer::~DKVServer() {
+    stop();
+}
+
+bool DKVServer::start() {
+    if (running_) {
+        return true;
+    }
+    
+    if (!initialize()) {
+        return false;
+    }
+    
+    running_ = true;
+    cleanup_running_ = true;
+    
+    // 启动清理线程
+    cleanup_thread_ = std::thread(&DKVServer::cleanupExpiredKeys, this);
+    
+    // 启动网络服务器
+    if (!network_server_->start()) {
+        std::cerr << "启动网络服务失败" << std::endl;
+        stop();
+        return false;
+    }
+    
+    std::cout << "DKV服务启动成功" << std::endl;
+    return true;
+}
+
+void DKVServer::stop() {
+    if (!running_) {
+        return;
+    }
+    
+    running_ = false;
+    cleanup_running_ = false;
+    
+    // 停止网络服务器
+    std::cout << "停止网络服务" << std::endl;
+    if (network_server_) {
+        network_server_->stop();
+    }
+    
+    // 等待清理线程结束
+    std::cout << "等待清理线程结束" << std::endl;
+    if (cleanup_thread_.joinable()) {
+        cleanup_thread_.join();
+    }
+    
+    std::cout << "DKV服务已停止" << std::endl;
+}
+
+bool DKVServer::loadConfig(const std::string& config_file) {
+    config_file_ = config_file;
+    return parseConfigFile(config_file);
+}
+
+void DKVServer::setPort(int port) {
+    port_ = port;
+}
+
+size_t DKVServer::getKeyCount() const {
+    return storage_engine_ ? storage_engine_->size() : 0;
+}
+
+uint64_t DKVServer::getTotalKeys() const {
+    return storage_engine_ ? storage_engine_->getTotalKeys() : 0;
+}
+
+uint64_t DKVServer::getExpiredKeys() const {
+    return storage_engine_ ? storage_engine_->getExpiredKeys() : 0;
+}
+
+bool DKVServer::isRunning() const {
+    return running_.load();
+}
+
+bool DKVServer::initialize() {
+    // 创建存储引擎实例
+    storage_engine_ = std::make_unique<StorageEngine>();
+    
+    // 创建网络服务实例
+    network_server_ = std::make_unique<NetworkServer>(port_);
+    network_server_->setStorageEngine(storage_engine_.get());
+    network_server_->setDKVServer(this);
+    
+    return true;
+}
+
+Response DKVServer::executeCommand(const Command& command) {
+    if (!storage_engine_) {
+        return Response(ResponseStatus::ERROR, "Storage engine not initialized");
+    }
+    
+    switch (command.type) {
+        case CommandType::SET: {
+            if (command.args.size() < 2) {
+                return Response(ResponseStatus::ERROR, "SET命令需要至少2个参数");
+            }
+            bool success;
+            if (command.args.size() >= 4 && command.args[2] == "PX") {
+                // 支持 PX 参数设置毫秒过期时间
+                try {
+                    int64_t ms = std::stoll(command.args[3]);
+                    success = storage_engine_->set(command.args[0], command.args[1], ms / 1000);
+                } catch (const std::invalid_argument&) {
+                    return Response(ResponseStatus::ERROR, "无效的过期时间");
+                }
+            } else if (command.args.size() >= 4 && command.args[2] == "EX") {
+                // 支持 EX 参数设置秒过期时间
+                try {
+                    int64_t seconds = std::stoll(command.args[3]);
+                    success = storage_engine_->set(command.args[0], command.args[1], seconds);
+                } catch (const std::invalid_argument&) {
+                    return Response(ResponseStatus::ERROR, "无效的过期时间");
+                }
+            } else {
+                success = storage_engine_->set(command.args[0], command.args[1]);
+            }
+            return Response(success ? ResponseStatus::OK : ResponseStatus::ERROR);
+        }
+        
+        case CommandType::GET: {
+            if (command.args.empty()) {
+                return Response(ResponseStatus::ERROR, "GET命令需要1个参数");
+            }
+            std::string value = storage_engine_->get(command.args[0]);
+            if (value.empty()) {
+                return Response(ResponseStatus::NOT_FOUND);
+            }
+            return Response(ResponseStatus::OK, "", value);
+        }
+        
+        case CommandType::DEL: {
+            if (command.args.empty()) {
+                return Response(ResponseStatus::ERROR, "DEL命令需要1个参数");
+            }
+            bool success = storage_engine_->del(command.args[0]);
+            return Response(success ? ResponseStatus::OK : ResponseStatus::ERROR);
+        }
+        
+        case CommandType::EXISTS: {
+            if (command.args.empty()) {
+                return Response(ResponseStatus::ERROR, "EXISTS命令需要1个参数");
+            }
+            bool exists = storage_engine_->exists(command.args[0]);
+            return Response(ResponseStatus::OK, "", exists ? "1" : "0");
+        }
+        
+        case CommandType::INCR: {
+            if (command.args.empty()) {
+                return Response(ResponseStatus::ERROR, "INCR命令需要1个参数");
+            }
+            int64_t value = storage_engine_->incr(command.args[0]);
+            return Response(ResponseStatus::OK, "", std::to_string(value));
+        }
+        
+        case CommandType::DECR: {
+            if (command.args.empty()) {
+                return Response(ResponseStatus::ERROR, "DECR命令需要1个参数");
+            }
+            int64_t value = storage_engine_->decr(command.args[0]);
+            return Response(ResponseStatus::OK, "", std::to_string(value));
+        }
+        
+        case CommandType::EXPIRE: {
+            if (command.args.size() < 2) {
+                return Response(ResponseStatus::ERROR, "EXPIRE命令需要2个参数");
+            }
+            try {
+                int64_t seconds = std::stoll(command.args[1]);
+                bool success = storage_engine_->expire(command.args[0], seconds);
+                return Response(success ? ResponseStatus::OK : ResponseStatus::ERROR);
+            } catch (const std::invalid_argument&) {
+                return Response(ResponseStatus::ERROR, "无效的过期时间");
+            }
+        }
+        
+        case CommandType::TTL: {
+            if (command.args.empty()) {
+                return Response(ResponseStatus::ERROR, "TTL命令需要1个参数");
+            }
+            int64_t ttl = storage_engine_->ttl(command.args[0]);
+            return Response(ResponseStatus::OK, "", std::to_string(ttl));
+        }
+        
+        default:
+            return Response(ResponseStatus::INVALID_COMMAND);
+    }
+}
+
+void DKVServer::cleanupExpiredKeys() {
+    while (cleanup_running_) {
+        // 使用更短的睡眠时间，以便快速响应停止信号
+        for (int i = 0; i < 60 && cleanup_running_; ++i) {
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+        }
+        
+        if (cleanup_running_ && storage_engine_) {
+            storage_engine_->cleanupExpiredKeys();
+        }
+    }
+}
+
+bool DKVServer::parseConfigFile(const std::string& config_file) {
+    std::ifstream file(config_file);
+    if (!file.is_open()) {
+        std::cerr << "无法打开配置文件: " << config_file << std::endl;
+        return false;
+    }
+    
+    std::string line;
+    while (std::getline(file, line)) {
+        // 跳过注释和空行
+        if (line.empty() || line[0] == '#') {
+            continue;
+        }
+        
+        std::istringstream iss(line);
+        std::string key, value;
+        
+        if (iss >> key >> value) {
+            if (key == "port") {
+                port_ = std::stoi(value);
+            }
+            // 可以在这里添加更多配置选项
+        }
+    }
+    
+    return true;
+}
+
+} // namespace dkv
