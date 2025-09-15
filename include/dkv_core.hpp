@@ -45,6 +45,11 @@ enum class CommandType {
     SMEMBERS = 24,
     SISMEMBER = 25,
     SCARD = 26,
+    // 服务器管理命令
+    FLUSHDB = 27,
+    DBSIZE = 28,
+    INFO = 29,
+    SHUTDOWN = 30,
 };
 
 // 响应状态枚举

@@ -32,6 +32,11 @@ CommandType Utils::stringToCommandType(const std::string& cmd) {
         {"SMEMBERS", CommandType::SMEMBERS},
         {"SISMEMBER", CommandType::SISMEMBER},
         {"SCARD", CommandType::SCARD},
+        // 服务器管理命令
+        {"FLUSHDB", CommandType::FLUSHDB},
+        {"DBSIZE", CommandType::DBSIZE},
+        {"INFO", CommandType::INFO},
+        {"SHUTDOWN", CommandType::SHUTDOWN},
     };
     
     auto it = command_map.find(cmd);
@@ -64,6 +69,11 @@ std::string Utils::commandTypeToString(CommandType type) {
         {CommandType::SMEMBERS, "SMEMBERS"},
         {CommandType::SISMEMBER, "SISMEMBER"},
         {CommandType::SCARD, "SCARD"},
+        // 服务器管理命令
+        {CommandType::FLUSHDB, "FLUSHDB"},
+        {CommandType::DBSIZE, "DBSIZE"},
+        {CommandType::INFO, "INFO"},
+        {CommandType::SHUTDOWN, "SHUTDOWN"},
     };
     
     auto it = type_map.find(type);

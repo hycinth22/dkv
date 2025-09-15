@@ -193,6 +193,35 @@ def test_datatype_set(sock):
     send_command(sock, "DEL myset")
     send_command(sock, "EXISTS myset")
 
+def test_server_management(sock):
+    """测试服务器管理相关命令"""
+    print("=" * 50)
+    print("测试服务器管理相关命令")
+    print("=" * 50)
+    
+    # 测试DBSIZE命令 - 获取数据库中的键数量
+    send_command(sock, "DBSIZE")
+    
+    # 创建一些键，用于后续测试
+    send_command(sock, "SET test_key1 value1")
+    send_command(sock, "SET test_key2 value2")
+    send_command(sock, "HSET user1 name Alice")
+    
+    # 再次测试DBSIZE，应该返回增加的键数量
+    send_command(sock, "DBSIZE")
+    
+    # 测试INFO命令 - 获取服务器信息
+    send_command(sock, "INFO")
+    
+    # 测试FLUSHDB命令 - 清空数据库
+    send_command(sock, "FLUSHDB")
+    
+    # 验证数据库是否已清空
+    send_command(sock, "DBSIZE")
+    send_command(sock, "EXISTS test_key1")
+    send_command(sock, "EXISTS test_key2")
+    send_command(sock, "EXISTS user1")
+
 def test_dkv_server():
     """测试DKV服务器"""
     try:
@@ -207,6 +236,7 @@ def test_dkv_server():
         test_datatype_hash(sock)
         test_datatype_list(sock)
         test_datatype_set(sock)
+        test_server_management(sock)
         
         print("所有测试完成！")
         

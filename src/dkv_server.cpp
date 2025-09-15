@@ -396,6 +396,36 @@ Response DKVServer::executeCommand(const Command& command) {
             return Response(ResponseStatus::OK, "", std::to_string(count));
         }
         
+        case CommandType::FLUSHDB: {
+            storage_engine_->flush();
+            return Response(ResponseStatus::OK, "OK");
+        }
+        
+        case CommandType::DBSIZE: {
+            size_t size = storage_engine_->size();
+            return Response(ResponseStatus::OK, "", std::to_string(size));
+        }
+        
+        case CommandType::INFO: {
+            std::string info = "# DKV Server Info\r\n";
+            info += "total_keys:" + std::to_string(getTotalKeys()) + "\r\n";
+            info += "expired_keys:" + std::to_string(getExpiredKeys()) + "\r\n";
+            info += "current_keys:" + std::to_string(getKeyCount()) + "\r\n";
+            info += "version:1.0.0\r\n";
+            return Response(ResponseStatus::OK, "", info);
+        }
+        
+        case CommandType::SHUTDOWN: {
+            // 异步停止服务器
+            std::thread shutdown_thread([this]() {
+                // 延迟一点时间，确保响应能够发送回去
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                stop();
+            });
+            shutdown_thread.detach();
+            return Response(ResponseStatus::OK, "Shutting down...");
+        }
+        
         default:
             return Response(ResponseStatus::INVALID_COMMAND);
     }
