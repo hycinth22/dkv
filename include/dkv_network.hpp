@@ -3,6 +3,7 @@
 #include "dkv_core.hpp"
 #include "dkv_storage.hpp"
 #include "dkv_resp.hpp"
+#include "dkv_worker_pool.hpp"
 #include <sys/epoll.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -12,6 +13,7 @@
 #include <vector>
 #include <queue>
 #include <thread>
+#include <condition_variable>
 #include <atomic>
 
 namespace dkv {
@@ -36,6 +38,49 @@ struct ClientConnection {
 
 
 class DKVServer;
+class CommandTask;
+
+// 子Reactor，处理IO事件
+class SubReactor {
+private:
+    int epoll_fd_;
+    std::atomic<bool> running_;
+    std::thread event_loop_thread_;
+    std::unordered_map<int, std::unique_ptr<ClientConnection>> clients_;
+    std::mutex clients_mutex_;
+    std::queue<CommandTask> task_queue_;
+    std::mutex task_queue_mutex_;
+    WorkerThreadPool* worker_pool_;
+
+public:
+    SubReactor(WorkerThreadPool* worker_pool);
+    ~SubReactor();
+
+    void setWorkerPool(WorkerThreadPool* worker_pool);
+    bool start();
+    void stop();
+    int getEpollFd() const { return epoll_fd_; }
+    
+    // 添加客户端连接到子Reactor
+    void addClient(int client_fd, const sockaddr_in& client_addr);
+    
+    // 处理命令结果
+    void handleCommandResult(int client_fd, const Response& response);
+    
+private:
+    void eventLoop();
+    void handleClientData(int client_fd);
+    void handleClientDisconnect(int client_fd);
+    void handleClientDisconnect_locked(int client_fd);
+    void sendResponse(int client_fd, const Response& response);
+    bool setNonBlocking(int fd);
+    bool addEpollEvent(int fd, uint32_t events);
+    bool modifyEpollEvent(int fd, uint32_t events);
+    bool removeEpollEvent(int fd);
+};
+
+
+
 // 网络服务器
 class NetworkServer {
 private:
@@ -43,66 +88,45 @@ private:
     int epoll_fd_;
     sockaddr_in server_addr_;
     std::atomic<bool> running_;
-    StorageEngine* storage_engine_;
-    DKVServer* server_;
     
-    // 客户端连接管理
-    std::unordered_map<int, std::unique_ptr<ClientConnection>> clients_;
-    std::mutex clients_mutex_;
+    // 多线程Reactor相关
+    std::vector<std::unique_ptr<SubReactor>> sub_reactors_;
     
-    // 事件循环线程
-    std::thread event_loop_thread_;
+    // 主事件循环线程
+    std::thread main_event_loop_thread_;
     
 public:
-    NetworkServer(int port = 6379);
+    NetworkServer(WorkerThreadPool* worker_pool, int port = 6379, size_t num_sub_reactors = 4);
     ~NetworkServer();
     
     // 启动和停止服务器
     bool start();
     void stop();
-    
-    // 设置存储引擎
-    void setStorageEngine(StorageEngine* storage_engine);
-    
+
     // 设置DKV服务器
     void setDKVServer(DKVServer* server);
-    
+
 private:
     // 初始化服务器
     bool initializeServer(int port);
     
-    // 事件循环
-    void eventLoop();
+    // 主事件循环（仅处理新连接）
+    void mainEventLoop();
     
-    // 处理新连接
+    // 处理新连接并分配给子Reactor
     void handleNewConnection();
-    
-    // 处理客户端数据
-    void handleClientData(int client_fd);
-    
-    // 内部版本，假设调用者已持有锁 clients_mutex_
-    void handleClientDisconnect_locked(int client_fd);
-
-    // 处理客户端断开
-    void handleClientDisconnect(int client_fd);
-    
-    // 执行命令
-    Response executeCommand(const Command& command);
-    
-    // 发送响应
-    void sendResponse(int client_fd, const Response& response);
     
     // 设置非阻塞模式
     bool setNonBlocking(int fd);
     
     // 添加epoll事件
     bool addEpollEvent(int fd, uint32_t events);
+    bool removeEpollEvent(int fd);
     
     // 修改epoll事件
     bool modifyEpollEvent(int fd, uint32_t events);
     
-    // 删除epoll事件
-    bool removeEpollEvent(int fd);
+
 };
 
 } // namespace dkv

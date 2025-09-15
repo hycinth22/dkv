@@ -2,17 +2,25 @@
 #include <iostream>
 #include <cstring>
 #include <algorithm>
+#include <thread>
+#include <chrono>
 #include "dkv_server.hpp"
+#include "dkv_worker_pool.hpp"
 
 namespace dkv {
 
 // NetworkServer 实现
-NetworkServer::NetworkServer(int port) 
-    : server_fd_(-1), epoll_fd_(-1), running_(false), storage_engine_(nullptr), server_(nullptr) {
+NetworkServer::NetworkServer(WorkerThreadPool* worker_pool, int port, size_t num_sub_reactors)
+    : server_fd_(-1), epoll_fd_(-1), running_(false) {
     memset(&server_addr_, 0, sizeof(server_addr_));
     server_addr_.sin_family = AF_INET;
     server_addr_.sin_addr.s_addr = INADDR_ANY;
     server_addr_.sin_port = htons(port);
+    
+    // 创建子Reactor
+    for (size_t i = 0; i < num_sub_reactors; ++i) {
+        sub_reactors_.emplace_back(std::make_unique<SubReactor>(worker_pool));
+    }
 }
 
 NetworkServer::~NetworkServer() {
@@ -25,19 +33,42 @@ bool NetworkServer::start() {
     }
     
     running_ = true;
-    event_loop_thread_ = std::thread(&NetworkServer::eventLoop, this);
     
-    std::cout << "DKV服务器启动成功，监听端口: " << ntohs(server_addr_.sin_port) << std::endl;
+    // 启动所有子Reactor
+    for (auto& reactor : sub_reactors_) {
+        if (!reactor->start()) {
+            std::cerr << "启动子Reactor失败" << std::endl;
+            stop();
+            return false;
+        }
+    }
+    
+    // 启动主事件循环线程（仅处理新连接）
+    main_event_loop_thread_ = std::thread(&NetworkServer::mainEventLoop, this);
+    
+    std::cout << "DKV服务器启动成功（多线程Reactor模式），监听端口: " 
+              << ntohs(server_addr_.sin_port) << std::endl;
+    std::cout << "子Reactor数量: " << sub_reactors_.size() << std::endl;
+    
     return true;
 }
 
 void NetworkServer::stop() {
+    if (!running_.load()) {
+        return;
+    }
     running_ = false;
     
-    if (event_loop_thread_.joinable()) {
-        event_loop_thread_.join();
+    // 等待主事件循环线程结束
+    if (main_event_loop_thread_.joinable()) {
+        main_event_loop_thread_.join();
     }
     
+    // 停止所有子Reactor
+    for (auto& reactor : sub_reactors_) {
+        reactor->stop();
+    }
+
     if (epoll_fd_ >= 0) {
         close(epoll_fd_);
         epoll_fd_ = -1;
@@ -48,18 +79,7 @@ void NetworkServer::stop() {
         server_fd_ = -1;
     }
     
-    {
-        std::lock_guard<std::mutex> lock(clients_mutex_);
-        clients_.clear();
-    }
-}
-
-void NetworkServer::setStorageEngine(StorageEngine* storage_engine) {
-    storage_engine_ = storage_engine;
-}
-
-void NetworkServer::setDKVServer(DKVServer* server) {
-    server_ = server;
+    std::cout << "DKV网络服务已停止" << std::endl;
 }
 
 bool NetworkServer::initializeServer(int /*port*/) {
@@ -99,7 +119,7 @@ bool NetworkServer::initializeServer(int /*port*/) {
         return false;
     }
     
-    // 创建epoll实例
+    // 创建主Reactor的epoll实例
     epoll_fd_ = epoll_create1(0);
     if (epoll_fd_ < 0) {
         std::cerr << "创建epoll实例失败" << std::endl;
@@ -107,7 +127,7 @@ bool NetworkServer::initializeServer(int /*port*/) {
         return false;
     }
     
-    // 添加服务器socket到epoll
+    // 添加服务器socket到主Reactor的epoll
     if (!addEpollEvent(server_fd_, EPOLLIN)) {
         std::cerr << "添加服务器socket到epoll失败" << std::endl;
         close(epoll_fd_);
@@ -118,7 +138,7 @@ bool NetworkServer::initializeServer(int /*port*/) {
     return true;
 }
 
-void NetworkServer::eventLoop() {
+void NetworkServer::mainEventLoop() {
     const int MAX_EVENTS = 128;
     struct epoll_event events[MAX_EVENTS];
     
@@ -129,7 +149,7 @@ void NetworkServer::eventLoop() {
             if (errno == EINTR) {
                 continue;
             }
-            std::cerr << "epoll_wait失败: " << strerror(errno) << std::endl;
+            std::cerr << "主Reactor epoll_wait失败: " << strerror(errno) << std::endl;
             break;
         }
         
@@ -137,17 +157,9 @@ void NetworkServer::eventLoop() {
             int fd = events[i].data.fd;
             uint32_t event_mask = events[i].events;
             
-            if (fd == server_fd_) {
+            if (fd == server_fd_ && (event_mask & EPOLLIN)) {
                 // 新连接
                 handleNewConnection();
-            } else {
-                // 客户端数据
-                if (event_mask & EPOLLIN) {
-                    handleClientData(fd);
-                }
-                if (event_mask & (EPOLLHUP | EPOLLERR)) {
-                    handleClientDisconnect(fd);
-                }
             }
         }
     }
@@ -157,110 +169,26 @@ void NetworkServer::handleNewConnection() {
     struct sockaddr_in client_addr;
     socklen_t client_len = sizeof(client_addr);
     
-    int client_fd = accept(server_fd_, (struct sockaddr*)&client_addr, &client_len);
-    if (client_fd < 0) {
-        return;
-    }
-    
-    // 设置非阻塞模式
-    if (!setNonBlocking(client_fd)) {
-        close(client_fd);
-        return;
-    }
-    
-    // 添加到epoll
-    if (!addEpollEvent(client_fd, EPOLLIN)) {
-        close(client_fd);
-        return;
-    }
-    
-    // 创建客户端连接对象
-    auto client = std::make_unique<ClientConnection>(client_fd, client_addr);
-    
-    {
-        std::lock_guard<std::mutex> lock(clients_mutex_);
-        clients_[client_fd] = std::move(client);
-    }
-    
-    std::cout << "新客户端连接: " << inet_ntoa(client_addr.sin_addr) 
-              << ":" << ntohs(client_addr.sin_port) << std::endl;
-}
-
-void NetworkServer::handleClientData(int client_fd) {
-    std::cout << "处理客户端数据: " << client_fd << std::endl;
-    std::lock_guard<std::mutex> lock(clients_mutex_);
-    auto it = clients_.find(client_fd);
-    if (it == clients_.end()) {
-        return;
-    }
-    
-    ClientConnection* client = it->second.get();
-    char buffer[4096];
-    ssize_t bytes_read = read(client_fd, buffer, sizeof(buffer));
-    if (bytes_read <= 0) {
-        handleClientDisconnect_locked(client_fd);
-        return;
-    }
-    client->read_buffer.append(buffer, bytes_read);
-    
-    // 解析命令
-    size_t pos = 0;
-    while (pos < client->read_buffer.length()) {
-        Command command = RESPProtocol::parseCommand(client->read_buffer.substr(pos), pos);
-        if (command.type == CommandType::UNKNOWN) {
-            break; // 等待更多数据
+    // 尽可能多地接受连接
+    while (true) {
+        int client_fd = accept(server_fd_, (struct sockaddr*)&client_addr, &client_len);
+        if (client_fd < 0) {
+            if (errno != EAGAIN && errno != EWOULDBLOCK) {
+                std::cerr << "接受连接失败: " << strerror(errno) << std::endl;
+            }
+            break; // 没有更多连接可接受
         }
         
-        // 执行命令
-        Response response = executeCommand(command);
+        // 负载均衡：轮询选择一个子Reactor处理新连接
+        static std::atomic<int> next_reactor_index(0);
+        int reactor_index = next_reactor_index++ % sub_reactors_.size();
         
-        // 发送响应
-        sendResponse(client_fd, response);
-    }
-    
-    // 移除已处理的数据
-    if (pos > 0) {
-        client->read_buffer.erase(0, pos);
-    }
-}
-
-// 内部版本，假设调用者已持有锁 clients_mutex_
-void NetworkServer::handleClientDisconnect_locked(int client_fd) {
-    auto it = clients_.find(client_fd);
-    if (it != clients_.end()) {
-        std::cout << "客户端断开连接: " << inet_ntoa(it->second->addr.sin_addr) 
-                  << ":" << ntohs(it->second->addr.sin_port) << std::endl;
-        removeEpollEvent(client_fd);
-        clients_.erase(it);
-    }
-}
-
-// 公开版本，会锁 clients_mutex_
-void NetworkServer::handleClientDisconnect(int client_fd) {
-    std::lock_guard<std::mutex> lock(clients_mutex_);
-    handleClientDisconnect_locked(client_fd);
-}
-
-Response NetworkServer::executeCommand(const Command& command) {
-    if (!server_) {
-        return Response(ResponseStatus::ERROR, "DKV server not initialized");
-    }
-    
-    return server_->executeCommand(command);
-}
-
-void NetworkServer::sendResponse(int client_fd, const Response& response) {
-    std::string resp_str;
-    
-    if (response.data.empty()) {
-        resp_str = RESPProtocol::serializeResponse(response);
-    } else {
-        resp_str = RESPProtocol::serializeBulkString(response.data);
-    }
-    
-    ssize_t bytes_sent = write(client_fd, resp_str.c_str(), resp_str.length());
-    if (bytes_sent < 0) {
-        std::cerr << "发送响应失败" << std::endl;
+        // 将客户端连接交给子Reactor处理
+        sub_reactors_[reactor_index]->addClient(client_fd, client_addr);
+        
+        std::cout << "新客户端连接: " << inet_ntoa(client_addr.sin_addr) 
+                  << ":" << ntohs(client_addr.sin_port) 
+                  << "，分配给子Reactor " << reactor_index << std::endl;
     }
 }
 

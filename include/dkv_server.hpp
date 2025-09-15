@@ -14,6 +14,7 @@ class DKVServer {
 private:
     std::unique_ptr<StorageEngine> storage_engine_;
     std::unique_ptr<NetworkServer> network_server_;
+    std::unique_ptr<WorkerThreadPool> worker_pool_;
     std::atomic<bool> running_;
     
     // 清理线程
@@ -21,12 +22,14 @@ private:
     std::atomic<bool> cleanup_running_;
     
     // 配置参数
-    int port_;
     std::string config_file_;
+    int port_;
     size_t max_memory_; // 最大内存限制（字节）
+    size_t num_sub_reactors_; // 子Reactor数量
+    size_t num_workers_;      // 工作线程数量
 
 public:
-    DKVServer(int port = 6379);
+    DKVServer(int port = 6379, size_t num_sub_reactors = 4, size_t num_workers = 8);
     ~DKVServer();
     
     // 启动和停止服务器

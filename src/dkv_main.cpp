@@ -28,12 +28,15 @@ void printHelp() {
     std::cout << "选项:" << std::endl;
     std::cout << "  -c, --config <file>    使用指定的配置文件" << std::endl;
     std::cout << "  -p, --port <port>      设置服务器端口（默认：6379）" << std::endl;
+    std::cout << "  -r, --reactors <num>   设置子Reactor数量（默认：4）" << std::endl;
+    std::cout << "  -w, --workers <num>    设置工作线程数量（默认：8）" << std::endl;
     std::cout << "  -v, --version          显示版本信息" << std::endl;
     std::cout << "  -h, --help             显示帮助信息" << std::endl;
     std::cout << "\n示例:" << std::endl;
     std::cout << "  dkv_server                    # 使用默认配置启动" << std::endl;
     std::cout << "  dkv_server -p 6380            # 在端口6380启动" << std::endl;
     std::cout << "  dkv_server -c config.conf     # 使用配置文件启动" << std::endl;
+    std::cout << "  dkv_server -r 8 -w 16         # 使用8个子Reactor和16个工作线程" << std::endl;
 }
 
 // 打印版本信息
@@ -48,6 +51,8 @@ struct ServerConfig {
     std::string config_file;
     bool show_help = false;
     bool show_version = false;
+    size_t num_sub_reactors = 4;  // 默认子Reactor数量
+    size_t num_workers = 8;       // 默认工作线程数量
 };
 
 ServerConfig parseArguments(int argc, char* argv[]) {
@@ -72,6 +77,20 @@ ServerConfig parseArguments(int argc, char* argv[]) {
                 config.config_file = argv[++i];
             } else {
                 std::cerr << "错误: -c/--config 需要指定配置文件" << std::endl;
+                exit(1);
+            }
+        } else if (arg == "-r" || arg == "--reactors") {
+            if (i + 1 < argc) {
+                config.num_sub_reactors = std::stoul(argv[++i]);
+            } else {
+                std::cerr << "错误: -r/--reactors 需要指定子Reactor数量" << std::endl;
+                exit(1);
+            }
+        } else if (arg == "-w" || arg == "--workers") {
+            if (i + 1 < argc) {
+                config.num_workers = std::stoul(argv[++i]);
+            } else {
+                std::cerr << "错误: -w/--workers 需要指定工作线程数量" << std::endl;
                 exit(1);
             }
         } else {
@@ -108,7 +127,7 @@ int main(int argc, char* argv[]) {
     signal(SIGTERM, signalHandler);
     
     // 创建服务器实例
-    DKVServer server(config.port);
+    DKVServer server(config.port, config.num_sub_reactors, config.num_workers);
     g_server = &server;
     
     // 加载配置文件（如果指定）

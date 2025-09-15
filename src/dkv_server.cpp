@@ -7,8 +7,9 @@
 
 namespace dkv {
 
-DKVServer::DKVServer(int port) 
-    : port_(port), running_(false), cleanup_running_(false), max_memory_(0) {
+DKVServer::DKVServer(int port, size_t num_sub_reactors, size_t num_workers) 
+    : running_(false), cleanup_running_(false), 
+      port_(port), max_memory_(0), num_sub_reactors_(num_sub_reactors), num_workers_(num_workers) {
 }
 
 DKVServer::~DKVServer() {
@@ -42,13 +43,19 @@ bool DKVServer::start() {
 }
 
 void DKVServer::stop() {
-    if (!running_) {
+    if (!running_.load()) {
         return;
     }
     
     running_ = false;
     cleanup_running_ = false;
     
+    // 等待工作线程结束
+    std::cout << "等待工作线程结束" << std::endl;
+    if (worker_pool_) {
+        worker_pool_->stop();
+    }
+
     // 停止网络服务器
     std::cout << "停止网络服务" << std::endl;
     if (network_server_) {
@@ -105,11 +112,11 @@ bool DKVServer::initialize() {
     // 创建存储引擎实例
     storage_engine_ = std::make_unique<StorageEngine>();
     
-    // 创建网络服务实例
-    network_server_ = std::make_unique<NetworkServer>(port_);
-    network_server_->setStorageEngine(storage_engine_.get());
-    network_server_->setDKVServer(this);
-    
+    // 创建工作线程池
+    worker_pool_ = std::make_unique<WorkerThreadPool>(this, num_workers_);
+
+    // 创建网络服务实例（使用多线程Reactor模式）
+    network_server_ = std::make_unique<NetworkServer>(worker_pool_.get(), port_, num_sub_reactors_);
     return true;
 }
 
