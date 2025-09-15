@@ -26,6 +26,13 @@ CommandType Utils::stringToCommandType(const std::string& cmd) {
         {"HKEYS", CommandType::HKEYS},
         {"HVALS", CommandType::HVALS},
         {"HLEN", CommandType::HLEN},
+        // 列表命令
+        {"LPUSH", CommandType::LPUSH},
+        {"RPUSH", CommandType::RPUSH},
+        {"LPOP", CommandType::LPOP},
+        {"RPOP", CommandType::RPOP},
+        {"LLEN", CommandType::LLEN},
+        {"LRANGE", CommandType::LRANGE},
         // 集合命令
         {"SADD", CommandType::SADD},
         {"SREM", CommandType::SREM},
@@ -63,6 +70,13 @@ std::string Utils::commandTypeToString(CommandType type) {
         {CommandType::HKEYS, "HKEYS"},
         {CommandType::HVALS, "HVALS"},
         {CommandType::HLEN, "HLEN"},
+        // 列表命令
+        {CommandType::LPUSH, "LPUSH"},
+        {CommandType::RPUSH, "RPUSH"},
+        {CommandType::LPOP, "LPOP"},
+        {CommandType::RPOP, "RPOP"},
+        {CommandType::LLEN, "LLEN"},
+        {CommandType::LRANGE, "LRANGE"},
         // 集合命令
         {CommandType::SADD, "SADD"},
         {CommandType::SREM, "SREM"},
