@@ -63,6 +63,14 @@ public:
     std::vector<Value> hvals(const Key& key);
     size_t hlen(const Key& key);
     
+    // 列表操作
+    size_t lpush(const Key& key, const Value& value);
+    size_t rpush(const Key& key, const Value& value);
+    std::string lpop(const Key& key);
+    std::string rpop(const Key& key);
+    size_t llen(const Key& key);
+    std::vector<Value> lrange(const Key& key, size_t start, size_t stop);
+    
 private:
     // 内部辅助方法
     bool isKeyExpired(const Key& key) const;
@@ -71,6 +79,8 @@ private:
     std::unique_ptr<DataItem> createStringItem(const Value& value, Timestamp expire_time);
     std::unique_ptr<DataItem> createHashItem();
     std::unique_ptr<DataItem> createHashItem(Timestamp expire_time);
+    std::unique_ptr<DataItem> createListItem();
+    std::unique_ptr<DataItem> createListItem(Timestamp expire_time);
 };
 
 // 数据项工厂

@@ -284,6 +284,71 @@ Response DKVServer::executeCommand(const Command& command) {
             return Response(ResponseStatus::OK, "", std::to_string(len));
         }
         
+        // 列表命令
+        case CommandType::LPUSH: {
+            if (command.args.size() < 2) {
+                return Response(ResponseStatus::ERROR, "LPUSH命令需要至少2个参数");
+            }
+            size_t len = storage_engine_->lpush(command.args[0], command.args[1]);
+            return Response(ResponseStatus::OK, "", std::to_string(len));
+        }
+        
+        case CommandType::RPUSH: {
+            if (command.args.size() < 2) {
+                return Response(ResponseStatus::ERROR, "RPUSH命令需要至少2个参数");
+            }
+            size_t len = storage_engine_->rpush(command.args[0], command.args[1]);
+            return Response(ResponseStatus::OK, "", std::to_string(len));
+        }
+        
+        case CommandType::LPOP: {
+            if (command.args.empty()) {
+                return Response(ResponseStatus::ERROR, "LPOP命令需要1个参数");
+            }
+            std::string value = storage_engine_->lpop(command.args[0]);
+            if (value.empty()) {
+                return Response(ResponseStatus::NOT_FOUND);
+            }
+            return Response(ResponseStatus::OK, "", value);
+        }
+        
+        case CommandType::RPOP: {
+            if (command.args.empty()) {
+                return Response(ResponseStatus::ERROR, "RPOP命令需要1个参数");
+            }
+            std::string value = storage_engine_->rpop(command.args[0]);
+            if (value.empty()) {
+                return Response(ResponseStatus::NOT_FOUND);
+            }
+            return Response(ResponseStatus::OK, "", value);
+        }
+        
+        case CommandType::LLEN: {
+            if (command.args.empty()) {
+                return Response(ResponseStatus::ERROR, "LLEN命令需要1个参数");
+            }
+            size_t len = storage_engine_->llen(command.args[0]);
+            return Response(ResponseStatus::OK, "", std::to_string(len));
+        }
+        
+        case CommandType::LRANGE: {
+            if (command.args.size() < 3) {
+                return Response(ResponseStatus::ERROR, "LRANGE命令需要至少3个参数");
+            }
+            try {
+                size_t start = std::stoull(command.args[1]);
+                size_t stop = std::stoull(command.args[2]);
+                std::vector<Value> values = storage_engine_->lrange(command.args[0], start, stop);
+                
+                Response response;
+                response.status = ResponseStatus::OK;
+                response.data = RESPProtocol::serializeArray(values);
+                return response;
+            } catch (const std::invalid_argument&) {
+                return Response(ResponseStatus::ERROR, "无效的范围参数");
+            }
+        }
+        
         default:
             return Response(ResponseStatus::INVALID_COMMAND);
     }

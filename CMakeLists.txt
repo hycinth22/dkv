@@ -44,11 +44,15 @@ target_link_libraries(test_datatype_string dkv_lib)
 add_executable(test_datatype_hash tests/test_datatype_hash.cpp)
 target_link_libraries(test_datatype_hash dkv_lib)
 
+add_executable(test_datatype_list tests/test_datatype_list.cpp)
+target_link_libraries(test_datatype_list dkv_lib)
+
 # 启用测试
 enable_testing()
 add_test(NAME basic_tests COMMAND test_basic)
 add_test(NAME datatype_string_tests COMMAND test_datatype_string)
 add_test(NAME datatype_hash_tests COMMAND test_datatype_hash)
+add_test(NAME datatype_list_tests COMMAND test_datatype_list)
 
 # 安装规则
 install(TARGETS dkv_server DESTINATION bin)

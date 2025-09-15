@@ -248,6 +248,14 @@ std::unique_ptr<DataItem> StorageEngine::createHashItem(Timestamp expire_time) {
     return std::make_unique<HashItem>(expire_time);
 }
 
+std::unique_ptr<DataItem> StorageEngine::createListItem() {
+    return std::make_unique<ListItem>();
+}
+
+std::unique_ptr<DataItem> StorageEngine::createListItem(Timestamp expire_time) {
+    return std::make_unique<ListItem>(expire_time);
+}
+
 bool StorageEngine::hset(const Key& key, const Value& field, const Value& value) {
     std::unique_lock<std::shared_mutex> lock(mutex_);
     
@@ -394,6 +402,134 @@ size_t StorageEngine::hlen(const Key& key) {
     return hash_item->size();
 }
 
+size_t StorageEngine::lpush(const Key& key, const Value& value) {
+    std::unique_lock<std::shared_mutex> lock(mutex_);
+    
+    auto it = data_.find(key);
+    ListItem* list_item = nullptr;
+    
+    if (it == data_.end() || isKeyExpired(key)) {
+        // 创建新的列表项
+        data_[key] = createListItem();
+        list_item = dynamic_cast<ListItem*>(data_[key].get());
+        total_keys_++;
+    } else {
+        // 检查是否是列表类型
+        list_item = dynamic_cast<ListItem*>(it->second.get());
+        if (!list_item) {
+            return 0; // 键存在但不是列表类型
+        }
+    }
+    
+    return list_item->lpush(value);
+}
+
+size_t StorageEngine::rpush(const Key& key, const Value& value) {
+    std::unique_lock<std::shared_mutex> lock(mutex_);
+    
+    auto it = data_.find(key);
+    ListItem* list_item = nullptr;
+    
+    if (it == data_.end() || isKeyExpired(key)) {
+        // 创建新的列表项
+        data_[key] = createListItem();
+        list_item = dynamic_cast<ListItem*>(data_[key].get());
+        total_keys_++;
+    } else {
+        // 检查是否是列表类型
+        list_item = dynamic_cast<ListItem*>(it->second.get());
+        if (!list_item) {
+            return 0; // 键存在但不是列表类型
+        }
+    }
+    
+    return list_item->rpush(value);
+}
+
+std::string StorageEngine::lpop(const Key& key) {
+    std::unique_lock<std::shared_mutex> lock(mutex_);
+    
+    auto it = data_.find(key);
+    if (it == data_.end() || isKeyExpired(key)) {
+        return "";
+    }
+    
+    auto* list_item = dynamic_cast<ListItem*>(it->second.get());
+    if (!list_item) {
+        return "";
+    }
+    
+    Value value;
+    if (list_item->lpop(value)) {
+        // 如果列表为空，删除整个键
+        if (list_item->empty()) {
+            data_.erase(it);
+            total_keys_--;
+        }
+        return value;
+    }
+    
+    return "";
+}
+
+std::string StorageEngine::rpop(const Key& key) {
+    std::unique_lock<std::shared_mutex> lock(mutex_);
+    
+    auto it = data_.find(key);
+    if (it == data_.end() || isKeyExpired(key)) {
+        return "";
+    }
+    
+    auto* list_item = dynamic_cast<ListItem*>(it->second.get());
+    if (!list_item) {
+        return "";
+    }
+    
+    Value value;
+    if (list_item->rpop(value)) {
+        // 如果列表为空，删除整个键
+        if (list_item->empty()) {
+            data_.erase(it);
+            total_keys_--;
+        }
+        return value;
+    }
+    
+    return "";
+}
+
+size_t StorageEngine::llen(const Key& key) {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    
+    auto it = data_.find(key);
+    if (it == data_.end() || isKeyExpired(key)) {
+        return 0;
+    }
+    
+    auto* list_item = dynamic_cast<ListItem*>(it->second.get());
+    if (!list_item) {
+        return 0;
+    }
+    
+    return list_item->size();
+}
+
+std::vector<Value> StorageEngine::lrange(const Key& key, size_t start, size_t stop) {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    
+    auto it = data_.find(key);
+    if (it == data_.end() || isKeyExpired(key)) {
+        return {};
+    }
+    
+    auto* list_item = dynamic_cast<ListItem*>(it->second.get());
+    if (!list_item) {
+        return {};
+    }
+    
+    return list_item->lrange(start, stop);
+}
+
 // DataItemFactory 实现
 std::unique_ptr<DataItem> DataItemFactory::create(DataType type, const std::string& data) {
     switch (type) {
@@ -403,6 +539,11 @@ std::unique_ptr<DataItem> DataItemFactory::create(DataType type, const std::stri
             auto hash_item = std::make_unique<HashItem>();
             hash_item->deserialize(data);
             return hash_item;
+        }
+        case DataType::LIST: {
+            auto list_item = std::make_unique<ListItem>();
+            list_item->deserialize(data);
+            return list_item;
         }
         default:
             return nullptr;
@@ -417,6 +558,11 @@ std::unique_ptr<DataItem> DataItemFactory::create(DataType type, const std::stri
             auto hash_item = std::make_unique<HashItem>(expire_time);
             hash_item->deserialize(data);
             return hash_item;
+        }
+        case DataType::LIST: {
+            auto list_item = std::make_unique<ListItem>(expire_time);
+            list_item->deserialize(data);
+            return list_item;
         }
         default:
             return nullptr;

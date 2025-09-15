@@ -13,7 +13,7 @@ using Timestamp = std::chrono::system_clock::time_point;
 
 // 命令类型枚举
 enum class CommandType {
-    UNKNOWN = -1
+    UNKNOWN = -1,
     // String
     SET = 0,
     GET = 1,
@@ -32,6 +32,13 @@ enum class CommandType {
     HKEYS = 13,
     HVALS = 14,
     HLEN = 15,
+    // 列表命令
+    LPUSH = 16,
+    RPUSH = 17,
+    LPOP = 18,
+    RPOP = 19,
+    LLEN = 20,
+    LRANGE = 21,
 };
 
 // 响应状态枚举

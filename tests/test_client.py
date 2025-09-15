@@ -108,6 +108,43 @@ def test_datatype_hash(sock):
     send_command(sock, "EXISTS user1")
     send_command(sock, "HGETALL user1")
 
+def test_datatype_list(sock):
+    """测试列表数据类型相关命令"""
+    print("=" * 50)
+    print("测试列表数据类型相关命令")
+    print("=" * 50)
+    
+    # 测试LPUSH和RPUSH
+    send_command(sock, "LPUSH mylist item1")
+    send_command(sock, "LPUSH mylist item2 item3")
+    send_command(sock, "RPUSH mylist item4")
+    
+    # 测试LLEN
+    send_command(sock, "LLEN mylist")
+    
+    # 测试LRANGE - 获取全部元素
+    send_command(sock, "LRANGE mylist 0 -1")
+    
+    # 测试LRANGE - 获取部分元素
+    send_command(sock, "LRANGE mylist 1 3")
+    
+    # 测试LPOP
+    send_command(sock, "LPOP mylist")
+    send_command(sock, "LLEN mylist")
+    
+    # 测试RPOP
+    send_command(sock, "RPOP mylist")
+    send_command(sock, "LLEN mylist")
+    
+    # 测试空列表
+    send_command(sock, "LLEN non_existent_list")
+    send_command(sock, "LPOP non_existent_list")
+    send_command(sock, "RPOP non_existent_list")
+    
+    # 测试删除整个列表键
+    send_command(sock, "DEL mylist")
+    send_command(sock, "EXISTS mylist")
+
 def test_dkv_server():
     """测试DKV服务器"""
     try:
@@ -120,6 +157,7 @@ def test_dkv_server():
         test_basic(sock)
         test_datatype_string(sock)
         test_datatype_hash(sock)
+        test_datatype_list(sock)
         
         print("所有测试完成！")
         
