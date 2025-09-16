@@ -44,7 +44,7 @@ void testMaxMemory(dkv::TestRunner& runner) {
     };
     
     // 测试maxmemory限制功能
-    dkv::DKVServer* mem_test_server = createServerWithMaxMemory(6381, 100); // 设置很小的内存限制（100字节）
+    dkv::DKVServer* mem_test_server = createServerWithMaxMemory(6381, 50*1024);
     if (mem_test_server) {
         int mem_test_sock = createClientConnection(6381);
         if (mem_test_sock >= 0) {
@@ -57,10 +57,17 @@ void testMaxMemory(dkv::TestRunner& runner) {
             
             // 先添加一些数据，使内存使用接近限制
             std::cout << "添加数据以接近内存限制..." << std::endl;
-            for (int i = 0; i < 5; ++i) {
+            int succ = 0;
+            for (int i = 0; i < 1000000000; ++i) {
                 std::string cmd = "SET key" + std::to_string(i) + " " + std::string(10, 'a' + i) + "\r\n";
-                sendMemCommand(cmd);
+                std::string response = sendMemCommand(cmd);
+                if (response[0] != '-') {
+                    succ++;
+                } else if (response.find("OOM") != std::string::npos) {
+                    break;
+                }
             }
+            std::cout << "成功添加 " << succ << " 个键值对" << std::endl;
             
             // 测试当内存使用超过maxmemory时SET命令应该失败
             runner.runTest("测试maxmemory限制功能", [&]() {
