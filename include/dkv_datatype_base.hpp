@@ -20,7 +20,8 @@ enum class DataType {
     LIST = 2,
     SET = 3,
     ZSET = 4,
-    BITMAP = 5
+    BITMAP = 5,
+    HYPERLOGLOG = 6
 };
 
 // 基础数据项接口
@@ -43,4 +44,5 @@ class ListItem;
 class SetItem;
 class ZSetItem;
 class BitmapItem;
+class HyperLogLogItem;
 } // namespace dkv

@@ -1057,4 +1057,91 @@ bool StorageEngine::bitOp(const std::string& operation, const Key& destkey, cons
     return false;
 }
 
+// HyperLogLog操作实现
+bool StorageEngine::pfadd(const Key& key, const std::vector<Value>& elements) {
+    std::unique_lock<std::shared_mutex> lock(mutex_);
+    
+    auto it = data_.find(key);
+    HyperLogLogItem* hll_item = nullptr;
+    
+    if (it == data_.end() || isKeyExpired(key)) {
+        // 创建新的HyperLogLog项
+        data_[key] = createHyperLogLogItem();
+        hll_item = dynamic_cast<HyperLogLogItem*>(data_[key].get());
+        total_keys_++;
+    } else {
+        // 检查是否是HyperLogLog类型
+        hll_item = dynamic_cast<HyperLogLogItem*>(it->second.get());
+        if (!hll_item) {
+            return false; // 键存在但不是HyperLogLog类型
+        }
+    }
+    
+    bool modified = false;
+    for (const auto& element : elements) {
+        if (hll_item->add(element)) {
+            modified = true;
+        }
+    }
+    
+    return modified;
+}
+
+uint64_t StorageEngine::pfcount(const Key& key) const {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    
+    auto it = data_.find(key);
+    if (it == data_.end() || isKeyExpired(key)) {
+        return 0;
+    }
+    
+    auto* hll_item = dynamic_cast<HyperLogLogItem*>(it->second.get());
+    if (!hll_item) {
+        return 0;
+    }
+    
+    return hll_item->count();
+}
+
+bool StorageEngine::pfmerge(const Key& destkey, const std::vector<Key>& sourcekeys) {
+    std::unique_lock<std::shared_mutex> lock(mutex_);
+    
+    // 检查源键是否都存在且未过期且都是HyperLogLog类型
+    std::vector<HyperLogLogItem*> hll_items;
+    for (const auto& key : sourcekeys) {
+        auto it = data_.find(key);
+        if (it == data_.end() || isKeyExpired(key)) {
+            continue; // 忽略不存在或过期的键
+        }
+        
+        auto* hll_item = dynamic_cast<HyperLogLogItem*>(it->second.get());
+        if (!hll_item) {
+            return false; // 源键不是HyperLogLog类型
+        }
+        
+        hll_items.push_back(hll_item);
+    }
+    
+    if (hll_items.empty()) {
+        // 如果没有有效的源键，创建一个空的HyperLogLog
+        data_[destkey] = createHyperLogLogItem();
+        return true;
+    }
+    
+    // 创建或更新目标键
+    data_[destkey] = createHyperLogLogItem();
+    HyperLogLogItem* dest_hll = dynamic_cast<HyperLogLogItem*>(data_[destkey].get());
+    
+    return dest_hll->merge(hll_items);
+}
+
+// 创建HyperLogLogItem的工厂方法
+std::unique_ptr<DataItem> StorageEngine::createHyperLogLogItem() {
+    return std::unique_ptr<DataItem>(dkv::createHyperLogLogItem());
+}
+
+std::unique_ptr<DataItem> StorageEngine::createHyperLogLogItem(Timestamp expire_time) {
+    return std::unique_ptr<DataItem>(dkv::createHyperLogLogItem(expire_time));
+}
+
 } // namespace dkv

@@ -117,6 +117,11 @@ public:
     size_t bitCount(const Key& key, size_t start, size_t end);
     bool bitOp(const std::string& operation, const Key& destkey, const std::vector<Key>& keys);
     
+    // HyperLogLog操作
+    bool pfadd(const Key& key, const std::vector<Value>& elements);
+    uint64_t pfcount(const Key& key) const;
+    bool pfmerge(const Key& destkey, const std::vector<Key>& sourcekeys);
+    
     // 获取数据项
     DataItem* getDataItem(const Key& key);
     
@@ -136,6 +141,8 @@ private:
     std::unique_ptr<DataItem> createZSetItem(Timestamp expire_time);
     std::unique_ptr<DataItem> createBitmapItem();
     std::unique_ptr<DataItem> createBitmapItem(Timestamp expire_time);
+    std::unique_ptr<DataItem> createHyperLogLogItem();
+    std::unique_ptr<DataItem> createHyperLogLogItem(Timestamp expire_time);
 };
 
 // 数据项工厂

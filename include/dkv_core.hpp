@@ -70,6 +70,10 @@ enum class CommandType {
     GETBIT = 46,
     BITCOUNT = 47,
     BITOP = 48,
+    // HyperLogLog命令
+    PFADD = 49,
+    PFCOUNT = 50,
+    PFMERGE = 51,
 };
 
 // 响应状态枚举

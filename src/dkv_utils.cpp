@@ -64,6 +64,10 @@ CommandType Utils::stringToCommandType(const std::string& cmd) {
         {"GETBIT", CommandType::GETBIT},
         {"BITCOUNT", CommandType::BITCOUNT},
         {"BITOP", CommandType::BITOP},
+        // HyperLogLog命令
+        {"PFADD", CommandType::PFADD},
+        {"PFCOUNT", CommandType::PFCOUNT},
+        {"PFMERGE", CommandType::PFMERGE},
     };
     
     auto it = command_map.find(cmd);
@@ -128,6 +132,10 @@ std::string Utils::commandTypeToString(CommandType type) {
         {CommandType::GETBIT, "GETBIT"},
         {CommandType::BITCOUNT, "BITCOUNT"},
         {CommandType::BITOP, "BITOP"},
+        // HyperLogLog命令
+        {CommandType::PFADD, "PFADD"},
+        {CommandType::PFCOUNT, "PFCOUNT"},
+        {CommandType::PFMERGE, "PFMERGE"},
     };
     
     auto it = type_map.find(type);

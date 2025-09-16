@@ -744,6 +744,121 @@ def test_datatype_bitmap(sock):
     response = send_command(sock, "DEL bitmap_key bitmap_key2 bitmap_result bitmap_result2 bitmap_result3 bitmap_result4")
 
 
+def test_datatype_hyperloglog(sock):
+    """测试HyperLogLog数据类型相关命令"""
+    print("=" * 50)
+    print("测试HyperLogLog数据类型相关命令")
+    print("=" * 50)
+    
+    # 测试PFADD命令 - 添加单个元素
+    response = send_command(sock, "PFADD hll_key element1")
+    assert_response(response, "1", "PFADD hll_key element1")
+    
+    # 测试PFADD命令 - 添加多个元素
+    response = send_command(sock, "PFADD hll_key element2 element3")
+    assert_response(response, "1", "PFADD hll_key element2 element3")
+    
+    # 测试PFADD命令 - 添加已存在的元素
+    response = send_command(sock, "PFADD hll_key element1")
+    assert_response(response, "0", "PFADD hll_key element1 (existing element)")
+    
+    # 测试PFCOUNT命令
+    response = send_command(sock, "PFCOUNT hll_key")
+    # HyperLogLog是概率数据结构，结果可能不准确，但应该接近3
+    # 解析RESP协议格式的响应 (形如 $1\r\n3\r\n)
+    count = response.strip()
+    # 提取数字部分
+    if count.startswith('$') and '\r\n' in count:
+        parts = count.split('\r\n')
+        if len(parts) >= 2:
+            count = parts[1]
+    
+    if count.isdigit():
+        count_val = int(count)
+        assert count_val > 0 and count_val <= 6, f"PFCOUNT返回值应该接近3，但得到了{count_val}"
+        print(f"✅ PFCOUNT测试通过，计数: {count_val}")
+    else:
+        assert False, f"PFCOUNT返回了非数字值: {count}"
+    print()
+    
+    # 创建第二个HyperLogLog用于合并测试
+    response = send_command(sock, "PFADD hll_key2 element4 element5")
+    assert_response(response, "1", "PFADD hll_key2 element4 element5")
+    
+    # 测试PFMERGE命令
+    response = send_command(sock, "PFMERGE hll_merged hll_key hll_key2")
+    assert_response(response, "OK", "PFMERGE hll_merged hll_key hll_key2")
+    
+    # 验证合并后的计数
+    response = send_command(sock, "PFCOUNT hll_merged")
+    # 合并后的计数应该大于或等于原始计数
+    merged_count = response.strip()
+    # 解析RESP协议格式的响应
+    if merged_count.startswith('$') and '\r\n' in merged_count:
+        parts = merged_count.split('\r\n')
+        if len(parts) >= 2:
+            merged_count = parts[1]
+    
+    if merged_count.isdigit():
+        merged_count_val = int(merged_count)
+        assert merged_count_val > 0 and merged_count_val <= 10, f"合并后的PFCOUNT返回值应该接近5，但得到了{merged_count_val}"
+        print(f"✅ 合并后的PFCOUNT测试通过，计数: {merged_count_val}")
+    else:
+        assert False, f"合并后的PFCOUNT返回了非数字值: {merged_count}"
+    print()
+    
+    # 测试PFCOUNT命令多参数功能
+    response = send_command(sock, "PFCOUNT hll_key hll_key2")
+    # 多参数PFCOUNT应该返回合并后的近似计数
+    multi_count = response.strip()
+    # 解析RESP协议格式的响应
+    if multi_count.startswith('$') and '\r\n' in multi_count:
+        parts = multi_count.split('\r\n')
+        if len(parts) >= 2:
+            multi_count = parts[1]
+    
+    if multi_count.isdigit():
+        multi_count_val = int(multi_count)
+        assert multi_count_val > 0 and multi_count_val <= 10, f"多参数PFCOUNT返回值应该接近5，但得到了{multi_count_val}"
+        print(f"✅ 多参数PFCOUNT测试通过，计数: {multi_count_val}")
+    else:
+        assert False, f"多参数PFCOUNT返回了非数字值: {multi_count}"
+    print()
+    
+    # 测试空HyperLogLog
+    response = send_command(sock, "PFCOUNT non_existent_hll")
+    # 解析RESP协议格式的响应
+    parsed_response = response.strip()
+    if parsed_response.startswith('$') and '\r\n' in parsed_response:
+        parts = parsed_response.split('\r\n')
+        if len(parts) >= 2:
+            parsed_response = parts[1]
+    
+    # 对于空HyperLogLog，响应应该是0
+    assert_response(parsed_response, "0", "PFCOUNT non_existent_hll")
+    
+    # 测试参数错误情况
+    response = send_command(sock, "PFADD invalid_key")
+    assert_response(response, "-", "PFADD invalid_key (参数不足)")
+    
+    response = send_command(sock, "PFCOUNT invalid_key invalid_key2")
+    # 即使键不存在，多参数PFCOUNT也应该返回一个有效的数字
+    count = response.strip()
+    # 解析RESP协议格式的响应
+    if count.startswith('$') and '\r\n' in count:
+        parts = count.split('\r\n')
+        if len(parts) >= 2:
+            count = parts[1]
+    
+    assert count.isdigit(), f"多参数PFCOUNT对于不存在的键应该返回数字，但得到了{count}"
+    
+    response = send_command(sock, "PFMERGE invalid_dest")
+    assert_response(response, "-", "PFMERGE invalid_dest (参数不足)")
+    
+    # 清理测试数据
+    response = send_command(sock, "DEL hll_key hll_key2 hll_merged")
+
+
 def test_dkv_server():
     """测试DKV服务器"""
     try:
@@ -760,6 +875,7 @@ def test_dkv_server():
         test_datatype_set(sock)
         test_datatype_zset(sock)
         test_datatype_bitmap(sock)
+        test_datatype_hyperloglog(sock)
         test_server_management(sock)
         
         print("所有测试完成！")

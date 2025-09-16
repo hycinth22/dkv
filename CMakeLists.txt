@@ -56,6 +56,9 @@ target_link_libraries(test_datatype_zset dkv_lib)
 add_executable(test_datatype_bitmap tests/test_datatype_bitmap.cpp)
 target_link_libraries(test_datatype_bitmap dkv_lib)
 
+add_executable(test_datatype_hyperloglog tests/test_datatype_hyperloglog.cpp)
+target_link_libraries(test_datatype_hyperloglog dkv_lib)
+
 add_executable(test_server_management tests/test_server_management.cpp)
 target_link_libraries(test_server_management dkv_lib)
 
@@ -78,6 +81,7 @@ add_test(NAME datatype_list_tests COMMAND test_datatype_list)
 add_test(NAME datatype_set_tests COMMAND test_datatype_set)
 add_test(NAME datatype_zset_tests COMMAND test_datatype_zset)
 add_test(NAME datatype_bitmap_tests COMMAND test_datatype_bitmap)
+add_test(NAME datatype_hyperloglog_tests COMMAND test_datatype_hyperloglog)
 add_test(NAME server_management_tests COMMAND test_server_management)
 add_test(NAME memory_allocator_tests COMMAND test_memory_allocator)
 add_test(NAME maxmemory_tests COMMAND test_maxmemory)

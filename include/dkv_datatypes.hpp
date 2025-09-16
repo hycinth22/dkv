@@ -7,3 +7,4 @@
 #include "dkv_datatype_set.hpp"
 #include "dkv_datatype_zset.hpp"
 #include "dkv_datatype_bitmap.hpp"
+#include "dkv_datatype_hyperloglog.hpp"
