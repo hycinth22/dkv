@@ -12,7 +12,8 @@ DKVServer::DKVServer(int port, size_t num_sub_reactors, size_t num_workers)
     : running_(false), cleanup_running_(false), 
       port_(port), max_memory_(0), num_sub_reactors_(num_sub_reactors), num_workers_(num_workers),
       enable_rdb_(true), rdb_filename_("dump.rdb"), rdb_save_interval_(3600), rdb_save_changes_(1000),
-      rdb_changes_(0), last_save_time_(std::chrono::system_clock::now()), rdb_save_running_(false) {
+      rdb_changes_(0), last_save_time_(std::chrono::system_clock::now()), rdb_save_running_(false),
+      enable_aof_(false), aof_filename_("appendonly.aof"), aof_fsync_policy_("everysec") {
 }
 
 DKVServer::~DKVServer() {
@@ -22,6 +23,7 @@ DKVServer::~DKVServer() {
 uint16_t DKVServer::getPort() const {
     return port_;
 }
+
 bool DKVServer::start() {
     if (running_) {
         return true;
@@ -31,8 +33,35 @@ bool DKVServer::start() {
         return false;
     }
     
-    // 尝试从RDB文件加载数据
-    loadRDBFromConfig();
+    // 初始化AOF组件
+    if (enable_aof_) {
+        DKV_LOG_INFO("初始化AOF持久化");
+        aof_persistence_ = std::make_unique<AOFPersistence>();
+        
+        // 设置fsync策略
+        AOFPersistence::FsyncPolicy policy = AOFPersistence::FsyncPolicy::EVERYSEC;
+        if (aof_fsync_policy_ == "always") {
+            policy = AOFPersistence::FsyncPolicy::ALWAYS;
+        } else if (aof_fsync_policy_ == "never") {
+            policy = AOFPersistence::FsyncPolicy::NEVER;
+        }
+        
+        // 初始化AOF文件
+        if (aof_persistence_->initialize(aof_filename_, policy)) {
+            // 从AOF文件加载数据
+            if (aof_persistence_->loadFromFile(this)) {
+                DKV_LOG_INFO("成功从AOF文件加载数据");
+                // AOF加载成功后，不需要再加载RDB
+            } else {
+                DKV_LOG_INFO("AOF文件加载失败，尝试从RDB文件加载数据");
+                loadRDBFromConfig();
+            }
+        }
+    } else {
+        DKV_LOG_INFO("AOF持久化已禁用");
+        // 尝试从RDB文件加载数据
+        loadRDBFromConfig();
+    }
     
     running_ = true;
     cleanup_running_ = true;
@@ -91,6 +120,12 @@ void DKVServer::stop() {
     
     // 保存数据到RDB文件
     saveRDBFromConfig();
+    
+    // 关闭AOF文件
+    if (aof_persistence_) {
+        aof_persistence_->close();
+        aof_persistence_.reset();
+    }
     
     // 等待工作线程结束
     DKV_LOG_INFO("等待工作线程结束");
@@ -197,6 +232,19 @@ void DKVServer::setRDBSaveChanges(uint64_t changes) {
     rdb_save_changes_ = changes;
 }
 
+// AOF持久化配置方法实现
+void DKVServer::setAOFEnabled(bool enabled) {
+    enable_aof_ = enabled;
+}
+
+void DKVServer::setAOFFilename(const std::string& filename) {
+    aof_filename_ = filename;
+}
+
+void DKVServer::setAOFFsyncPolicy(const std::string& policy) {
+    aof_fsync_policy_ = policy;
+}
+
 bool DKVServer::initialize() {
     DKV_LOG_INFO("开始初始化DKV服务器");
     
@@ -282,6 +330,10 @@ Response DKVServer::executeCommand(const Command& command) {
             
             if (success) {
                 incDirty();
+                // 如果启用了AOF持久化，将命令写入AOF文件
+                if (enable_aof_ && aof_persistence_) {
+                    aof_persistence_->appendCommand(command);
+                }
                 return Response(ResponseStatus::OK, "OK");
             } else {
                 DKV_LOG_ERROR("设置键值失败: ", key.c_str());
@@ -323,6 +375,10 @@ Response DKVServer::executeCommand(const Command& command) {
             
             if (deleted_count > 0) {
                 DKV_LOG_DEBUG("成功删除 ", deleted_count, " 个键");
+                // 如果启用了AOF持久化，将命令写入AOF文件
+                if (enable_aof_ && aof_persistence_) {
+                    aof_persistence_->appendCommand(command);
+                }
             }
             
             return Response(ResponseStatus::OK, "", std::to_string(deleted_count));
@@ -349,6 +405,10 @@ Response DKVServer::executeCommand(const Command& command) {
             }
             int64_t value = storage_engine_->incr(command.args[0]);
             incDirty();
+            // 如果启用了AOF持久化，将命令写入AOF文件
+            if (enable_aof_ && aof_persistence_) {
+                aof_persistence_->appendCommand(command);
+            }
             return Response(ResponseStatus::OK, "", std::to_string(value));
         }
         
@@ -358,6 +418,10 @@ Response DKVServer::executeCommand(const Command& command) {
             }
             int64_t value = storage_engine_->decr(command.args[0]);
             incDirty();
+            // 如果启用了AOF持久化，将命令写入AOF文件
+            if (enable_aof_ && aof_persistence_) {
+                aof_persistence_->appendCommand(command);
+            }
             return Response(ResponseStatus::OK, "", std::to_string(value));
         }
         
@@ -371,6 +435,10 @@ Response DKVServer::executeCommand(const Command& command) {
                 
                 if (success) {
                     incDirty();
+                    // 如果启用了AOF持久化，将命令写入AOF文件
+                    if (enable_aof_ && aof_persistence_) {
+                        aof_persistence_->appendCommand(command);
+                    }
                     return Response(ResponseStatus::OK, "", "1"); // 1表示成功设置过期时间
                 } else {
                     return Response(ResponseStatus::OK, "", "0"); // 0表示未设置过期时间（键不存在或操作被跳过）
@@ -407,6 +475,11 @@ Response DKVServer::executeCommand(const Command& command) {
                     added_count++;
                     incDirty();
                 }
+            }
+            
+            // 如果启用了AOF持久化且有更新，将命令写入AOF文件
+            if (enable_aof_ && aof_persistence_ && added_count > 0) {
+                aof_persistence_->appendCommand(command);
             }
             
             return Response(ResponseStatus::OK, "", std::to_string(added_count));
@@ -459,6 +532,10 @@ Response DKVServer::executeCommand(const Command& command) {
             
             if (deleted_count > 0) {
                 incDirty();
+                // 如果启用了AOF持久化，将命令写入AOF文件
+                if (enable_aof_ && aof_persistence_) {
+                    aof_persistence_->appendCommand(command);
+                }
             }
             
             return Response(ResponseStatus::OK, "", std::to_string(deleted_count));
@@ -518,6 +595,10 @@ Response DKVServer::executeCommand(const Command& command) {
             }
             
             incDirty();
+            // 如果启用了AOF持久化，将命令写入AOF文件
+            if (enable_aof_ && aof_persistence_) {
+                aof_persistence_->appendCommand(command);
+            }
             return Response(ResponseStatus::OK, "", std::to_string(len));
         }
         
@@ -534,6 +615,10 @@ Response DKVServer::executeCommand(const Command& command) {
             }
             
             incDirty();
+            // 如果启用了AOF持久化，将命令写入AOF文件
+            if (enable_aof_ && aof_persistence_) {
+                aof_persistence_->appendCommand(command);
+            }
             return Response(ResponseStatus::OK, "", std::to_string(len));
         }
         
@@ -552,6 +637,10 @@ Response DKVServer::executeCommand(const Command& command) {
                 }
                 
                 incDirty();
+                // 如果启用了AOF持久化，将命令写入AOF文件
+                if (enable_aof_ && aof_persistence_) {
+                    aof_persistence_->appendCommand(command);
+                }
                 return Response(ResponseStatus::OK, "", value);
             }
             
@@ -573,6 +662,10 @@ Response DKVServer::executeCommand(const Command& command) {
                 }
                 
                 incDirty();
+                // 如果启用了AOF持久化，将命令写入AOF文件
+                if (enable_aof_ && aof_persistence_) {
+                    aof_persistence_->appendCommand(command);
+                }
                 
                 // 返回列表格式的响应
                 Response response(ResponseStatus::OK);
@@ -600,6 +693,10 @@ Response DKVServer::executeCommand(const Command& command) {
                 }
                 
                 incDirty();
+                // 如果启用了AOF持久化，将命令写入AOF文件
+                if (enable_aof_ && aof_persistence_) {
+                    aof_persistence_->appendCommand(command);
+                }
                 return Response(ResponseStatus::OK, "", value);
             }
             
@@ -621,6 +718,10 @@ Response DKVServer::executeCommand(const Command& command) {
                 }
                 
                 incDirty();
+                // 如果启用了AOF持久化，将命令写入AOF文件
+                if (enable_aof_ && aof_persistence_) {
+                    aof_persistence_->appendCommand(command);
+                }
                 
                 // 返回列表格式的响应
                 Response response(ResponseStatus::OK);
@@ -669,6 +770,10 @@ Response DKVServer::executeCommand(const Command& command) {
             
             if (addedCount > 0) {
                 incDirty();
+                // 如果启用了AOF持久化，将命令写入AOF文件
+                if (enable_aof_ && aof_persistence_) {
+                    aof_persistence_->appendCommand(command);
+                }
             }
             
             return Response(ResponseStatus::OK, "", std::to_string(addedCount));
@@ -683,6 +788,10 @@ Response DKVServer::executeCommand(const Command& command) {
             
             if (removedCount > 0) {
                 incDirty();
+                // 如果启用了AOF持久化，将命令写入AOF文件
+                if (enable_aof_ && aof_persistence_) {
+                    aof_persistence_->appendCommand(command);
+                }
             }
             
             return Response(ResponseStatus::OK, "", std::to_string(removedCount));
@@ -719,6 +828,10 @@ Response DKVServer::executeCommand(const Command& command) {
         case CommandType::FLUSHDB: {
             storage_engine_->flush();
             incDirty();
+            // 如果启用了AOF持久化，将命令写入AOF文件
+            if (enable_aof_ && aof_persistence_) {
+                aof_persistence_->appendCommand(command);
+            }
             return Response(ResponseStatus::OK, "OK");
         }
         
@@ -821,6 +934,10 @@ Response DKVServer::executeCommand(const Command& command) {
                 
                 if (addedCount > 0) {
                     incDirty();
+                    // 如果启用了AOF持久化，将命令写入AOF文件
+                    if (enable_aof_ && aof_persistence_) {
+                        aof_persistence_->appendCommand(command);
+                    }
                 }
                 
                 return Response(ResponseStatus::OK, "", std::to_string(addedCount));
@@ -840,6 +957,10 @@ Response DKVServer::executeCommand(const Command& command) {
             
             if (removedCount > 0) {
                 incDirty();
+                // 如果启用了AOF持久化，将命令写入AOF文件
+                if (enable_aof_ && aof_persistence_) {
+                    aof_persistence_->appendCommand(command);
+                }
             }
             
             return Response(ResponseStatus::OK, "", std::to_string(removedCount));
@@ -1084,6 +1205,10 @@ Response DKVServer::executeCommand(const Command& command) {
                 bool oldBit = storage_engine_->getBit(key, offset);
                 storage_engine_->setBit(key, offset, bit != 0);
                 incDirty();
+                // 如果启用了AOF持久化，将命令写入AOF文件
+                if (enable_aof_ && aof_persistence_) {
+                    aof_persistence_->appendCommand(command);
+                }
                 return Response(ResponseStatus::OK, "", std::to_string(oldBit ? 1 : 0));
             } catch (const std::invalid_argument&) {
                 return Response(ResponseStatus::ERROR, "无效的参数类型");
@@ -1148,6 +1273,10 @@ Response DKVServer::executeCommand(const Command& command) {
             
             if (success) {
                 incDirty();
+                // 如果启用了AOF持久化，将命令写入AOF文件
+                if (enable_aof_ && aof_persistence_) {
+                    aof_persistence_->appendCommand(command);
+                }
                 return Response(ResponseStatus::OK, "", "1"); // 返回成功状态
             } else {
                 return Response(ResponseStatus::ERROR, "BITOP操作失败");
@@ -1170,6 +1299,10 @@ Response DKVServer::executeCommand(const Command& command) {
             
             if (success) {
                 incDirty();
+                // 如果启用了AOF持久化，将命令写入AOF文件
+                if (enable_aof_ && aof_persistence_) {
+                    aof_persistence_->appendCommand(command);
+                }
             }
             
             return Response(ResponseStatus::OK, "", success ? "1" : "0");
@@ -1209,6 +1342,10 @@ Response DKVServer::executeCommand(const Command& command) {
             
             if (success) {
                 incDirty();
+                // 如果启用了AOF持久化，将命令写入AOF文件
+                if (enable_aof_ && aof_persistence_) {
+                    aof_persistence_->appendCommand(command);
+                }
                 return Response(ResponseStatus::OK, "", "OK");
             } else {
                 return Response(ResponseStatus::ERROR, "PFMERGE操作失败");
@@ -1263,6 +1400,12 @@ bool DKVServer::parseConfigFile(const std::string& config_file) {
                 rdb_save_interval_ = std::stoull(value);
             } else if (key == "rdb_save_changes") {
                 rdb_save_changes_ = std::stoull(value);
+            } else if (key == "enable_aof") {
+                enable_aof_ = (value == "yes" || value == "true" || value == "1");
+            } else if (key == "aof_filename") {
+                aof_filename_ = value;
+            } else if (key == "aof_fsync_policy") {
+                aof_fsync_policy_ = value;
             }
         }
     }

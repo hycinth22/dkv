@@ -17,16 +17,12 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
-# 包含头文件目录
-include_directories(include)
-
 # 查找线程库
 find_package(Threads REQUIRED)
 
-# 收集源文件
-file(GLOB_RECURSE DKV_SOURCES "src/*.cpp")
-
 # 创建DKV库
+file(GLOB_RECURSE DKV_SOURCES "src/*.cpp")
+include_directories(include)
 add_library(dkv_lib STATIC ${DKV_SOURCES})
 target_link_libraries(dkv_lib Threads::Threads)
 
@@ -71,6 +67,8 @@ target_link_libraries(test_maxmemory dkv_lib)
 add_executable(test_rdb tests/test_rdb.cpp)
 target_link_libraries(test_rdb dkv_lib)
 
+add_executable(test_aof tests/test_aof.cpp)
+target_link_libraries(test_aof dkv_lib)
 
 # 启用测试
 enable_testing()
@@ -86,6 +84,7 @@ add_test(NAME server_management_tests COMMAND test_server_management)
 add_test(NAME memory_allocator_tests COMMAND test_memory_allocator)
 add_test(NAME maxmemory_tests COMMAND test_maxmemory)
 add_test(NAME rdb_tests COMMAND test_rdb)
+add_test(NAME aof_tests COMMAND test_aof)
 
 
 # 安装规则

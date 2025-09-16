@@ -3,6 +3,7 @@
 #include "dkv_core.hpp"
 #include "dkv_storage.hpp"
 #include "dkv_network.hpp"
+#include "dkv_aof.hpp"
 #include <memory>
 #include <thread>
 #include <atomic>
@@ -39,6 +40,12 @@ private:
     std::atomic<Timestamp> last_save_time_; // 上次RDB保存时间
     std::thread rdb_save_thread_;        // RDB自动保存线程
     std::atomic<bool> rdb_save_running_; // RDB自动保存线程运行标志
+    
+    // AOF持久化相关配置
+    bool enable_aof_;         // 是否启用AOF持久化
+    std::string aof_filename_; // AOF文件名
+    std::string aof_fsync_policy_; // AOF fsync策略
+    std::unique_ptr<AOFPersistence> aof_persistence_; // AOF持久化管理器
 
 public:
     DKVServer(int port = 6379, size_t num_sub_reactors = 4, size_t num_workers = 8);
@@ -76,6 +83,11 @@ public:
     void setRDBFilename(const std::string& filename);
     void setRDBSaveInterval(uint64_t interval);
     void setRDBSaveChanges(uint64_t changes);
+    
+    // AOF持久化配置方法
+    void setAOFEnabled(bool enabled);
+    void setAOFFilename(const std::string& filename);
+    void setAOFFsyncPolicy(const std::string& policy);
     
 private:
     // 初始化服务器
