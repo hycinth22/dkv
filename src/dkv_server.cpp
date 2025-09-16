@@ -280,23 +280,34 @@ Response DKVServer::executeCommand(const Command& command) {
         
         case CommandType::DEL: {
             if (command.args.empty()) {
-                return Response(ResponseStatus::ERROR, "DEL命令需要1个参数");
-            }
-            bool success = storage_engine_->del(command.args[0]);
-            
-            if (success) {
-                incDirty();
+                return Response(ResponseStatus::ERROR, "DEL命令需要至少1个参数");
             }
             
-            return Response(success ? ResponseStatus::OK : ResponseStatus::ERROR);
+            int deleted_count = 0;
+            for (const auto& key : command.args) {
+                bool success = storage_engine_->del(key);
+                if (success) {
+                    deleted_count++;
+                    incDirty();
+                }
+            }
+            
+            return Response(ResponseStatus::OK, "", std::to_string(deleted_count));
         }
         
         case CommandType::EXISTS: {
             if (command.args.empty()) {
-                return Response(ResponseStatus::ERROR, "EXISTS命令需要1个参数");
+                return Response(ResponseStatus::ERROR, "EXISTS命令需要至少1个参数");
             }
-            bool exists = storage_engine_->exists(command.args[0]);
-            return Response(ResponseStatus::OK, "", exists ? "1" : "0");
+            
+            int exists_count = 0;
+            for (const auto& key : command.args) {
+                if (storage_engine_->exists(key)) {
+                    exists_count++;
+                }
+            }
+            
+            return Response(ResponseStatus::OK, "", std::to_string(exists_count));
         }
         
         case CommandType::INCR: {
@@ -327,9 +338,10 @@ Response DKVServer::executeCommand(const Command& command) {
                 
                 if (success) {
                     incDirty();
+                    return Response(ResponseStatus::OK, "", "1"); // 1表示成功设置过期时间
+                } else {
+                    return Response(ResponseStatus::OK, "", "0"); // 0表示未设置过期时间（键不存在或操作被跳过）
                 }
-                
-                return Response(success ? ResponseStatus::OK : ResponseStatus::ERROR);
             } catch (const std::invalid_argument&) {
                 return Response(ResponseStatus::ERROR, "无效的过期时间");
             }
@@ -345,16 +357,26 @@ Response DKVServer::executeCommand(const Command& command) {
         
         // 哈希命令
         case CommandType::HSET: {
-            if (command.args.size() < 3) {
-                return Response(ResponseStatus::ERROR, "HSET命令需要至少3个参数");
-            }
-            bool success = storage_engine_->hset(command.args[0], command.args[1], command.args[2]);
-            
-            if (success) {
-                incDirty();
+            if (command.args.size() < 3 || command.args.size() % 2 == 0) {
+                return Response(ResponseStatus::ERROR, "HSET命令需要奇数个参数(至少3个)");
             }
             
-            return Response(success ? ResponseStatus::OK : ResponseStatus::ERROR);
+            int added_count = 0;
+            const std::string& key = command.args[0];
+            
+            // 遍历所有字段值对
+            for (size_t i = 1; i < command.args.size(); i += 2) {
+                const std::string& field = command.args[i];
+                const std::string& value = command.args[i + 1];
+                
+                bool success = storage_engine_->hset(key, field, value);
+                if (success) {
+                    added_count++;
+                    incDirty();
+                }
+            }
+            
+            return Response(ResponseStatus::OK, "", std::to_string(added_count));
         }
         
         case CommandType::HGET: {
@@ -391,13 +413,22 @@ Response DKVServer::executeCommand(const Command& command) {
             if (command.args.size() < 2) {
                 return Response(ResponseStatus::ERROR, "HDEL命令需要至少2个参数");
             }
-            bool success = storage_engine_->hdel(command.args[0], command.args[1]);
+            int deleted_count = 0;
+            const Key& key = command.args[0];
             
-            if (success) {
+            for (size_t i = 1; i < command.args.size(); ++i) {
+                const Value& field = command.args[i];
+                bool success = storage_engine_->hdel(key, field);
+                if (success) {
+                    deleted_count++;
+                }
+            }
+            
+            if (deleted_count > 0) {
                 incDirty();
             }
             
-            return Response(success ? ResponseStatus::OK : ResponseStatus::ERROR);
+            return Response(ResponseStatus::OK, "", std::to_string(deleted_count));
         }
         
         case CommandType::HEXISTS: {
@@ -445,7 +476,14 @@ Response DKVServer::executeCommand(const Command& command) {
             if (command.args.size() < 2) {
                 return Response(ResponseStatus::ERROR, "LPUSH命令需要至少2个参数");
             }
-            size_t len = storage_engine_->lpush(command.args[0], command.args[1]);
+            size_t len = 0;
+            const Key& key = command.args[0];
+            
+            // 处理多个值参数
+            for (size_t i = 1; i < command.args.size(); ++i) {
+                len = storage_engine_->lpush(key, command.args[i]);
+            }
+            
             incDirty();
             return Response(ResponseStatus::OK, "", std::to_string(len));
         }
@@ -454,35 +492,112 @@ Response DKVServer::executeCommand(const Command& command) {
             if (command.args.size() < 2) {
                 return Response(ResponseStatus::ERROR, "RPUSH命令需要至少2个参数");
             }
-            size_t len = storage_engine_->rpush(command.args[0], command.args[1]);
+            size_t len = 0;
+            const Key& key = command.args[0];
+            
+            // 处理多个值参数
+            for (size_t i = 1; i < command.args.size(); ++i) {
+                len = storage_engine_->rpush(key, command.args[i]);
+            }
+            
             incDirty();
             return Response(ResponseStatus::OK, "", std::to_string(len));
         }
         
         case CommandType::LPOP: {
             if (command.args.empty()) {
-                return Response(ResponseStatus::ERROR, "LPOP命令需要1个参数");
-            }
-            std::string value = storage_engine_->lpop(command.args[0]);
-            if (value.empty()) {
-                return Response(ResponseStatus::NOT_FOUND);
+                return Response(ResponseStatus::ERROR, "LPOP命令需要至少1个参数");
             }
             
-            incDirty();
-            return Response(ResponseStatus::OK, "", value);
+            const Key& key = command.args[0];
+            
+            // 只有键参数的情况 - 返回单个元素
+            if (command.args.size() == 1) {
+                std::string value = storage_engine_->lpop(key);
+                if (value.empty()) {
+                    return Response(ResponseStatus::NOT_FOUND);
+                }
+                
+                incDirty();
+                return Response(ResponseStatus::OK, "", value);
+            }
+            
+            // 有count参数的情况 - 返回元素列表
+            try {
+                size_t count = std::stoull(command.args[1]);
+                std::vector<std::string> values;
+                
+                for (size_t i = 0; i < count; ++i) {
+                    std::string value = storage_engine_->lpop(key);
+                    if (value.empty()) {
+                        break;  // 列表为空，停止弹出
+                    }
+                    values.push_back(value);
+                }
+                
+                if (values.empty()) {
+                    return Response(ResponseStatus::NOT_FOUND);
+                }
+                
+                incDirty();
+                
+                // 返回列表格式的响应
+                Response response(ResponseStatus::OK);
+                response.data = RESPProtocol::serializeArray(values);
+                return response;
+            } catch (const std::invalid_argument&) {
+                return Response(ResponseStatus::ERROR, "count参数必须是正整数");
+            } catch (const std::out_of_range&) {
+                return Response(ResponseStatus::ERROR, "count参数太大");
+            }
         }
         
         case CommandType::RPOP: {
             if (command.args.empty()) {
-                return Response(ResponseStatus::ERROR, "RPOP命令需要1个参数");
-            }
-            std::string value = storage_engine_->rpop(command.args[0]);
-            if (value.empty()) {
-                return Response(ResponseStatus::NOT_FOUND);
+                return Response(ResponseStatus::ERROR, "RPOP命令需要至少1个参数");
             }
             
-            incDirty();
-            return Response(ResponseStatus::OK, "", value);
+            const Key& key = command.args[0];
+            
+            // 只有键参数的情况 - 返回单个元素
+            if (command.args.size() == 1) {
+                std::string value = storage_engine_->rpop(key);
+                if (value.empty()) {
+                    return Response(ResponseStatus::NOT_FOUND);
+                }
+                
+                incDirty();
+                return Response(ResponseStatus::OK, "", value);
+            }
+            
+            // 有count参数的情况 - 返回元素列表
+            try {
+                size_t count = std::stoull(command.args[1]);
+                std::vector<std::string> values;
+                
+                for (size_t i = 0; i < count; ++i) {
+                    std::string value = storage_engine_->rpop(key);
+                    if (value.empty()) {
+                        break;  // 列表为空，停止弹出
+                    }
+                    values.push_back(value);
+                }
+                
+                if (values.empty()) {
+                    return Response(ResponseStatus::NOT_FOUND);
+                }
+                
+                incDirty();
+                
+                // 返回列表格式的响应
+                Response response(ResponseStatus::OK);
+                response.data = RESPProtocol::serializeArray(values);
+                return response;
+            } catch (const std::invalid_argument&) {
+                return Response(ResponseStatus::ERROR, "count参数必须是正整数");
+            } catch (const std::out_of_range&) {
+                return Response(ResponseStatus::ERROR, "count参数太大");
+            }
         }
         
         case CommandType::LLEN: {
