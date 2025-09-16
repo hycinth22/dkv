@@ -159,8 +159,12 @@ void SubReactor::handleClientData(int client_fd) {
     // 解析命令
     size_t pos = 0;
     while (pos < client->read_buffer.length()) {
-        Command command = RESPProtocol::parseCommand(client->read_buffer.substr(pos), pos);
-        
+        std::cout << "SubReactor::handleClientData 解析命令前: " << client->read_buffer.substr(pos) << std::endl;
+        Command command = RESPProtocol::parseCommand(client->read_buffer, pos);
+        std::cout << "SubReactor::handleClientData 解析命令后: " << Utils::commandTypeToString(command.type) << std::endl;
+        for (const auto& arg : command.args) {
+            std::cout << "SubReactor::handleClientData 解析命令参数: " << arg << std::endl;
+        }
         if (command.type == CommandType::UNKNOWN) {
             break; // 等待更多数据
         }
