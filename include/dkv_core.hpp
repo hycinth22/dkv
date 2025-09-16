@@ -65,6 +65,11 @@ enum class CommandType {
     ZREVRANGEBYSCORE = 42,
     ZCOUNT = 43,
     ZCARD = 44,
+    // 位图命令
+    SETBIT = 45,
+    GETBIT = 46,
+    BITCOUNT = 47,
+    BITOP = 48,
 };
 
 // 响应状态枚举

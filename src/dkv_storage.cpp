@@ -297,6 +297,14 @@ std::unique_ptr<DataItem> StorageEngine::createZSetItem(Timestamp expire_time) {
     return std::make_unique<ZSetItem>(expire_time);
 }
 
+std::unique_ptr<DataItem> StorageEngine::createBitmapItem() {
+    return std::make_unique<BitmapItem>();
+}
+
+std::unique_ptr<DataItem> StorageEngine::createBitmapItem(Timestamp expire_time) {
+    return std::make_unique<BitmapItem>(expire_time);
+}
+
 bool StorageEngine::hset(const Key& key, const Value& field, const Value& value) {
     std::unique_lock<std::shared_mutex> lock(mutex_);
     
@@ -940,6 +948,113 @@ size_t StorageEngine::zcard(const Key& key) const {
     }
     
     return zset_item->zcard();
+}
+
+// 位图操作实现
+bool StorageEngine::setBit(const Key& key, size_t offset, bool value) {
+    std::unique_lock<std::shared_mutex> lock(mutex_);
+    
+    auto it = data_.find(key);
+    BitmapItem* bitmap_item = nullptr;
+    
+    if (it == data_.end() || isKeyExpired(key)) {
+        // 创建新的位图项
+        data_[key] = createBitmapItem();
+        bitmap_item = dynamic_cast<BitmapItem*>(data_[key].get());
+        total_keys_++;
+    } else {
+        // 检查是否是位图类型
+        bitmap_item = dynamic_cast<BitmapItem*>(it->second.get());
+        if (!bitmap_item) {
+            return false; // 键存在但不是位图类型
+        }
+    }
+    
+    return bitmap_item->setBit(offset, value);
+}
+
+bool StorageEngine::getBit(const Key& key, size_t offset) {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    
+    auto it = data_.find(key);
+    if (it == data_.end() || isKeyExpired(key)) {
+        return false;
+    }
+    
+    auto* bitmap_item = dynamic_cast<BitmapItem*>(it->second.get());
+    if (!bitmap_item) {
+        return false;
+    }
+    
+    return bitmap_item->getBit(offset);
+}
+
+size_t StorageEngine::bitCount(const Key& key) {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    
+    auto it = data_.find(key);
+    if (it == data_.end() || isKeyExpired(key)) {
+        return 0;
+    }
+    
+    auto* bitmap_item = dynamic_cast<BitmapItem*>(it->second.get());
+    if (!bitmap_item) {
+        return 0;
+    }
+    
+    return bitmap_item->bitCount();
+}
+
+size_t StorageEngine::bitCount(const Key& key, size_t start, size_t end) {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    
+    auto it = data_.find(key);
+    if (it == data_.end() || isKeyExpired(key)) {
+        return 0;
+    }
+    
+    auto* bitmap_item = dynamic_cast<BitmapItem*>(it->second.get());
+    if (!bitmap_item) {
+        return 0;
+    }
+    
+    return bitmap_item->bitCount(start, end);
+}
+
+bool StorageEngine::bitOp(const std::string& operation, const Key& destkey, const std::vector<Key>& keys) {
+    std::unique_lock<std::shared_mutex> lock(mutex_);
+    
+    // 检查源键是否都存在且未过期且都是位图类型
+    std::vector<BitmapItem*> bitmap_items;
+    for (const auto& key : keys) {
+        auto it = data_.find(key);
+        if (it == data_.end() || isKeyExpired(key)) {
+            return false;
+        }
+        
+        auto* bitmap_item = dynamic_cast<BitmapItem*>(it->second.get());
+        if (!bitmap_item) {
+            return false;
+        }
+        
+        bitmap_items.push_back(bitmap_item);
+    }
+    
+    // 创建或更新目标键
+    data_[destkey] = createBitmapItem();
+    BitmapItem* dest_bitmap = dynamic_cast<BitmapItem*>(data_[destkey].get());
+    
+    if (operation == "AND") {
+        return dest_bitmap->bitOpAnd(bitmap_items);
+    } else if (operation == "OR") {
+        return dest_bitmap->bitOpOr(bitmap_items);
+    } else if (operation == "XOR") {
+        return dest_bitmap->bitOpXor(bitmap_items);
+    } else if (operation == "NOT" && keys.size() == 1) {
+        return dest_bitmap->bitOpNot(bitmap_items[0]);
+    }
+    
+    return false;
 }
 
 } // namespace dkv

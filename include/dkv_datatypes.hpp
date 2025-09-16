@@ -6,3 +6,4 @@
 #include "dkv_datatype_list.hpp"
 #include "dkv_datatype_set.hpp"
 #include "dkv_datatype_zset.hpp"
+#include "dkv_datatype_bitmap.hpp"

@@ -59,6 +59,11 @@ CommandType Utils::stringToCommandType(const std::string& cmd) {
         {"ZREVRANGEBYSCORE", CommandType::ZREVRANGEBYSCORE},
         {"ZCOUNT", CommandType::ZCOUNT},
         {"ZCARD", CommandType::ZCARD},
+        // 位图命令
+        {"SETBIT", CommandType::SETBIT},
+        {"GETBIT", CommandType::GETBIT},
+        {"BITCOUNT", CommandType::BITCOUNT},
+        {"BITOP", CommandType::BITOP},
     };
     
     auto it = command_map.find(cmd);
@@ -118,6 +123,11 @@ std::string Utils::commandTypeToString(CommandType type) {
         {CommandType::ZREVRANGEBYSCORE, "ZREVRANGEBYSCORE"},
         {CommandType::ZCOUNT, "ZCOUNT"},
         {CommandType::ZCARD, "ZCARD"},
+        // 位图命令
+        {CommandType::SETBIT, "SETBIT"},
+        {CommandType::GETBIT, "GETBIT"},
+        {CommandType::BITCOUNT, "BITCOUNT"},
+        {CommandType::BITOP, "BITOP"},
     };
     
     auto it = type_map.find(type);

@@ -1068,6 +1068,89 @@ Response DKVServer::executeCommand(const Command& command) {
             return Response(ResponseStatus::OK, "", std::to_string(count));
         }
         
+        // 位图命令
+        case CommandType::SETBIT: {
+            if (command.args.size() < 3) {
+                return Response(ResponseStatus::ERROR, "SETBIT命令需要至少3个参数");
+            }
+            try {
+                Key key(command.args[0]);
+                uint64_t offset = std::stoull(command.args[1]);
+                int bit = std::stoi(command.args[2]);
+                
+                bool oldBit = storage_engine_->getBit(key, offset);
+                storage_engine_->setBit(key, offset, bit != 0);
+                incDirty();
+                return Response(ResponseStatus::OK, "", std::to_string(oldBit ? 1 : 0));
+            } catch (const std::invalid_argument&) {
+                return Response(ResponseStatus::ERROR, "无效的参数类型");
+            }
+        }
+        
+        case CommandType::GETBIT: {
+            if (command.args.size() < 2) {
+                return Response(ResponseStatus::ERROR, "GETBIT命令需要至少2个参数");
+            }
+            try {
+                Key key(command.args[0]);
+                uint64_t offset = std::stoull(command.args[1]);
+                
+                bool bit = storage_engine_->getBit(key, offset);
+                return Response(ResponseStatus::OK, "", std::to_string(bit ? 1 : 0));
+            } catch (const std::invalid_argument&) {
+                return Response(ResponseStatus::ERROR, "无效的参数类型");
+            }
+        }
+        
+        case CommandType::BITCOUNT: {
+            if (command.args.empty()) {
+                return Response(ResponseStatus::ERROR, "BITCOUNT命令需要至少1个参数");
+            }
+            
+            Key key(command.args[0]);
+            uint64_t count = 0;
+            
+            if (command.args.size() == 1) {
+                // 没有额外参数，统计整个位图
+                count = storage_engine_->bitCount(key);
+            } else if (command.args.size() == 3) {
+                // 有start和end参数，这些参数指的是字节索引
+                try {
+                    uint64_t start = std::stoull(command.args[1]);
+                    uint64_t end = std::stoull(command.args[2]);
+                    count = storage_engine_->bitCount(key, start, end);
+                } catch (const std::invalid_argument&) {
+                    return Response(ResponseStatus::ERROR, "无效的参数类型");
+                }
+            } else {
+                return Response(ResponseStatus::ERROR, "BITCOUNT命令参数数量不正确");
+            }
+            
+            return Response(ResponseStatus::OK, "", std::to_string(count));
+        }
+        
+        case CommandType::BITOP: {
+            if (command.args.size() < 4) {
+                return Response(ResponseStatus::ERROR, "BITOP命令需要至少4个参数");
+            }
+            
+            const std::string& operation = command.args[0];
+            Key destKey(command.args[1]);
+            std::vector<Key> srcKeys;
+            for (size_t i = 2; i < command.args.size(); ++i) {
+                srcKeys.push_back(Key(command.args[i]));
+            }
+            
+            bool success = storage_engine_->bitOp(operation, destKey, srcKeys);
+            
+            if (success) {
+                incDirty();
+                return Response(ResponseStatus::OK, "", "1"); // 返回成功状态
+            } else {
+                return Response(ResponseStatus::ERROR, "BITOP操作失败");
+            }
+        }
+        
         default:
             return Response(ResponseStatus::INVALID_COMMAND);
     }

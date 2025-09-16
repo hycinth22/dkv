@@ -110,6 +110,13 @@ public:
     size_t zcount(const Key& key, double min, double max);
     size_t zcard(const Key& key) const;
     
+    // 位图操作
+    bool setBit(const Key& key, size_t offset, bool value);
+    bool getBit(const Key& key, size_t offset);
+    size_t bitCount(const Key& key);
+    size_t bitCount(const Key& key, size_t start, size_t end);
+    bool bitOp(const std::string& operation, const Key& destkey, const std::vector<Key>& keys);
+    
     // 获取数据项
     DataItem* getDataItem(const Key& key);
     
@@ -127,6 +134,8 @@ private:
     std::unique_ptr<DataItem> createSetItem(Timestamp expire_time);
     std::unique_ptr<DataItem> createZSetItem();
     std::unique_ptr<DataItem> createZSetItem(Timestamp expire_time);
+    std::unique_ptr<DataItem> createBitmapItem();
+    std::unique_ptr<DataItem> createBitmapItem(Timestamp expire_time);
 };
 
 // 数据项工厂

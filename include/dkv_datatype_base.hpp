@@ -19,7 +19,8 @@ enum class DataType {
     HASH = 1,
     LIST = 2,
     SET = 3,
-    ZSET = 4
+    ZSET = 4,
+    BITMAP = 5
 };
 
 // 基础数据项接口
@@ -41,5 +42,5 @@ class HashItem;
 class ListItem;
 class SetItem;
 class ZSetItem;
-
+class BitmapItem;
 } // namespace dkv

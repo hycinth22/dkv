@@ -608,6 +608,142 @@ def test_server_management(sock):
     response = send_command(sock, "EXISTS user1")
     assert_response(response, "0", "EXISTS user1 (after FLUSHDB)")
 
+def test_datatype_bitmap(sock):
+    """测试位图数据类型相关命令"""
+    print("=" * 50)
+    print("测试位图数据类型相关命令")
+    print("=" * 50)
+    
+    # 测试SETBIT和GETBIT
+    response = send_command(sock, "SETBIT bitmap_key 0 1")
+    assert_response(response, "0", "SETBIT bitmap_key 0 1 (初始设置)")
+    
+    response = send_command(sock, "GETBIT bitmap_key 0")
+    assert_response(response, "1", "GETBIT bitmap_key 0")
+    
+    # 测试更新已设置的位
+    response = send_command(sock, "SETBIT bitmap_key 0 0")
+    assert_response(response, "1", "SETBIT bitmap_key 0 0 (更新)")
+    
+    response = send_command(sock, "GETBIT bitmap_key 0")
+    assert_response(response, "0", "GETBIT bitmap_key 0 (更新后)")
+    
+    # 测试多个位的设置
+    response = send_command(sock, "SETBIT bitmap_key 1 1")
+    assert_response(response, "0", "SETBIT bitmap_key 1 1")
+    
+    response = send_command(sock, "SETBIT bitmap_key 5 1")
+    assert_response(response, "0", "SETBIT bitmap_key 5 1")
+    
+    response = send_command(sock, "SETBIT bitmap_key 10 1")
+    assert_response(response, "0", "SETBIT bitmap_key 10 1")
+    
+    # 测试BITCOUNT
+    response = send_command(sock, "BITCOUNT bitmap_key")
+    assert_response(response, "3", "BITCOUNT bitmap_key (整个位图)")
+    
+    # 测试BITCOUNT范围
+    response = send_command(sock, "BITCOUNT bitmap_key 0 0")
+    # 第一个字节包含位0-7，其中位1和5是1，所以应该返回2
+    assert_response(response, "2", "BITCOUNT bitmap_key 0 0 (第一个字节)")
+    
+    # 测试BITCOUNT大范围
+    response = send_command(sock, "BITCOUNT bitmap_key 0 2")
+    # 字节0-2应该包含所有设置的位，所以应该返回3
+    assert_response(response, "3", "BITCOUNT bitmap_key 0 2 (多个字节)")
+    
+    # 测试BITOP命令
+    # 准备另一个位图
+    response = send_command(sock, "SETBIT bitmap_key2 1 1")
+    assert_response(response, "0", "SETBIT bitmap_key2 1 1")
+    
+    response = send_command(sock, "SETBIT bitmap_key2 2 1")
+    assert_response(response, "0", "SETBIT bitmap_key2 2 1")
+    
+    response = send_command(sock, "SETBIT bitmap_key2 10 1")
+    assert_response(response, "0", "SETBIT bitmap_key2 10 1")
+    
+    # 测试BITOP AND
+    response = send_command(sock, "BITOP AND bitmap_result bitmap_key bitmap_key2")
+    # 返回结果应该是位图的大小（字节数），取决于最大的偏移量
+    assert any(char.isdigit() for char in response), "BITOP AND返回值应该是一个数字"
+    
+    # 验证AND操作结果
+    # bitmap_key和bitmap_key2在位1和位10都设置为1，所以这些位在结果中应该是1
+    response = send_command(sock, "GETBIT bitmap_result 1")
+    assert_response(response, "1", "GETBIT bitmap_result 1 (AND结果)")
+    
+    response = send_command(sock, "GETBIT bitmap_result 10")
+    assert_response(response, "1", "GETBIT bitmap_result 10 (AND结果)")
+    
+    # 其他位应该是0
+    response = send_command(sock, "GETBIT bitmap_result 5")
+    assert_response(response, "0", "GETBIT bitmap_result 5 (AND结果)")
+    
+    response = send_command(sock, "GETBIT bitmap_result 2")
+    assert_response(response, "0", "GETBIT bitmap_result 2 (AND结果)")
+    
+    # 测试BITOP OR
+    response = send_command(sock, "BITOP OR bitmap_result2 bitmap_key bitmap_key2")
+    assert any(char.isdigit() for char in response), "BITOP OR返回值应该是一个数字"
+    
+    # 验证OR操作结果
+    response = send_command(sock, "GETBIT bitmap_result2 1")
+    assert_response(response, "1", "GETBIT bitmap_result2 1 (OR结果)")
+    
+    response = send_command(sock, "GETBIT bitmap_result2 2")
+    assert_response(response, "1", "GETBIT bitmap_result2 2 (OR结果)")
+    
+    response = send_command(sock, "GETBIT bitmap_result2 5")
+    assert_response(response, "1", "GETBIT bitmap_result2 5 (OR结果)")
+    
+    response = send_command(sock, "GETBIT bitmap_result2 10")
+    assert_response(response, "1", "GETBIT bitmap_result2 10 (OR结果)")
+    
+    # 测试BITOP XOR
+    response = send_command(sock, "BITOP XOR bitmap_result3 bitmap_key bitmap_key2")
+    assert any(char.isdigit() for char in response), "BITOP XOR返回值应该是一个数字"
+    
+    # 验证XOR操作结果
+    # bitmap_key和bitmap_key2在位1和位10都为1，所以这些位在XOR结果中应该是0
+    response = send_command(sock, "GETBIT bitmap_result3 1")
+    assert_response(response, "0", "GETBIT bitmap_result3 1 (XOR结果)")
+    
+    response = send_command(sock, "GETBIT bitmap_result3 10")
+    assert_response(response, "0", "GETBIT bitmap_result3 10 (XOR结果)")
+    
+    # bitmap_key在位5为1，bitmap_key2在位2为1，所以这些位在XOR结果中应该是1
+    response = send_command(sock, "GETBIT bitmap_result3 5")
+    assert_response(response, "1", "GETBIT bitmap_result3 5 (XOR结果)")
+    
+    response = send_command(sock, "GETBIT bitmap_result3 2")
+    assert_response(response, "1", "GETBIT bitmap_result3 2 (XOR结果)")
+    
+    # 测试BITOP NOT
+    response = send_command(sock, "BITOP NOT bitmap_result4 bitmap_key")
+    assert any(char.isdigit() for char in response), "BITOP NOT返回值应该是一个数字"
+    
+    # 验证NOT操作结果
+    response = send_command(sock, "GETBIT bitmap_result4 0")
+    assert_response(response, "1", "GETBIT bitmap_result4 0 (NOT结果)")
+    
+    response = send_command(sock, "GETBIT bitmap_result4 1")
+    assert_response(response, "0", "GETBIT bitmap_result4 1 (NOT结果)")
+    
+    # 测试参数错误情况
+    response = send_command(sock, "SETBIT invalid_key")
+    assert_response(response, "-", "SETBIT invalid_key (参数不足)")
+    
+    response = send_command(sock, "GETBIT invalid_key")
+    assert_response(response, "-", "GETBIT invalid_key (参数不足)")
+    
+    response = send_command(sock, "BITOP UNKNOWN dest_key src_key1 src_key2")
+    assert_response(response, "-", "BITOP UNKNOWN (不支持的操作)")
+    
+    # 清理测试数据
+    response = send_command(sock, "DEL bitmap_key bitmap_key2 bitmap_result bitmap_result2 bitmap_result3 bitmap_result4")
+
+
 def test_dkv_server():
     """测试DKV服务器"""
     try:
@@ -623,6 +759,7 @@ def test_dkv_server():
         test_datatype_list(sock)
         test_datatype_set(sock)
         test_datatype_zset(sock)
+        test_datatype_bitmap(sock)
         test_server_management(sock)
         
         print("所有测试完成！")
