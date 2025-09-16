@@ -52,6 +52,7 @@ public:
     bool loadConfig(const std::string& config_file);
     void setPort(int port);
     void setMaxMemory(size_t max_memory);
+    uint16_t getPort() const;
     
     // 统计信息
     size_t getKeyCount() const;

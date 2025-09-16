@@ -19,6 +19,9 @@ DKVServer::~DKVServer() {
     stop();
 }
 
+uint16_t DKVServer::getPort() const {
+    return port_;
+}
 bool DKVServer::start() {
     if (running_) {
         return true;
@@ -1233,7 +1236,7 @@ void DKVServer::cleanupExpiredKeys() {
 bool DKVServer::parseConfigFile(const std::string& config_file) {
     std::ifstream file(config_file);
     if (!file.is_open()) {
-        DKV_LOG_ERROR("无法打开配置文件: {}", config_file);
+        DKV_LOG_ERROR("无法打开配置文件: ", config_file);
         return false;
     }
     
