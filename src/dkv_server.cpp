@@ -279,7 +279,7 @@ Response DKVServer::executeCommand(const Command& command) {
             
             if (success) {
                 incDirty();
-                return Response(ResponseStatus::OK, "", "OK");
+                return Response(ResponseStatus::OK, "OK");
             } else {
                 DKV_LOG_ERROR("设置键值失败: ", key.c_str());
                 return Response(ResponseStatus::ERROR, "设置键值失败");
