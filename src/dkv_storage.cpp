@@ -289,6 +289,14 @@ std::unique_ptr<DataItem> StorageEngine::createSetItem(Timestamp expire_time) {
     return std::make_unique<SetItem>(expire_time);
 }
 
+std::unique_ptr<DataItem> StorageEngine::createZSetItem() {
+    return std::make_unique<ZSetItem>();
+}
+
+std::unique_ptr<DataItem> StorageEngine::createZSetItem(Timestamp expire_time) {
+    return std::make_unique<ZSetItem>(expire_time);
+}
+
 bool StorageEngine::hset(const Key& key, const Value& field, const Value& value) {
     std::unique_lock<std::shared_mutex> lock(mutex_);
     
@@ -607,6 +615,11 @@ std::unique_ptr<DataItem> DataItemFactory::create(DataType type, const std::stri
             set_item->deserialize(data);
             return set_item;
         }
+        case DataType::ZSET: {
+            auto zset_item = std::make_unique<ZSetItem>(expire_time);
+            zset_item->deserialize(data);
+            return zset_item;
+        }
         default:
             return nullptr;
     }
@@ -718,6 +731,215 @@ DataItem* StorageEngine::getDataItem(const Key& key) {
     }
     
     return it->second.get();
+}
+
+size_t StorageEngine::zadd(const Key& key, const std::vector<std::pair<Value, double>>& members_with_scores) {
+    std::unique_lock<std::shared_mutex> lock(mutex_);
+    
+    auto it = data_.find(key);
+    ZSetItem* zset_item = nullptr;
+    
+    if (it == data_.end() || isKeyExpired(key)) {
+        // 创建新的有序集合项
+        data_[key] = createZSetItem();
+        zset_item = dynamic_cast<ZSetItem*>(data_[key].get());
+        total_keys_++;
+    } else {
+        // 检查是否是有序集合类型
+        zset_item = dynamic_cast<ZSetItem*>(it->second.get());
+        if (!zset_item) {
+            return 0; // 键存在但不是有序集合类型
+        }
+    }
+    
+    // 添加多个元素并返回成功添加的个数
+    return zset_item->zadd(members_with_scores);
+}
+
+size_t StorageEngine::zrem(const Key& key, const std::vector<Value>& members) {
+    std::unique_lock<std::shared_mutex> lock(mutex_);
+    
+    auto it = data_.find(key);
+    if (it == data_.end() || isKeyExpired(key)) {
+        return 0; // 键不存在
+    }
+    
+    // 检查是否是有序集合类型
+    ZSetItem* zset_item = dynamic_cast<ZSetItem*>(it->second.get());
+    if (!zset_item) {
+        return 0; // 键存在但不是有序集合类型
+    }
+    
+    // 删除多个元素并返回成功删除的个数
+    size_t removed_count = zset_item->zrem(members);
+    
+    // 如果集合为空，删除整个键
+    if (zset_item->empty()) {
+        data_.erase(it);
+        total_keys_--;
+    }
+    
+    return removed_count;
+}
+
+bool StorageEngine::zscore(const Key& key, const Value& member, double& score) {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    
+    auto it = data_.find(key);
+    if (it == data_.end() || isKeyExpired(key)) {
+        return false;
+    }
+    
+    ZSetItem* zset_item = dynamic_cast<ZSetItem*>(it->second.get());
+    if (!zset_item) {
+        return false;
+    }
+    
+    return zset_item->zscore(member, score);
+}
+
+bool StorageEngine::zismember(const Key& key, const Value& member) const {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    
+    auto it = data_.find(key);
+    if (it == data_.end() || isKeyExpired(key)) {
+        return false;
+    }
+    
+    ZSetItem* zset_item = dynamic_cast<ZSetItem*>(it->second.get());
+    if (!zset_item) {
+        return false;
+    }
+    
+    return zset_item->zismember(member);
+}
+
+bool StorageEngine::zrank(const Key& key, const Value& member, size_t& rank) {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    
+    auto it = data_.find(key);
+    if (it == data_.end() || isKeyExpired(key)) {
+        return false;
+    }
+    
+    ZSetItem* zset_item = dynamic_cast<ZSetItem*>(it->second.get());
+    if (!zset_item) {
+        return false;
+    }
+    
+    return zset_item->zrank(member, rank);
+}
+
+bool StorageEngine::zrevrank(const Key& key, const Value& member, size_t& rank) {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    
+    auto it = data_.find(key);
+    if (it == data_.end() || isKeyExpired(key)) {
+        return false;
+    }
+    
+    ZSetItem* zset_item = dynamic_cast<ZSetItem*>(it->second.get());
+    if (!zset_item) {
+        return false;
+    }
+    
+    return zset_item->zrevrank(member, rank);
+}
+
+std::vector<std::pair<Value, double>> StorageEngine::zrange(const Key& key, size_t start, size_t stop) {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    
+    auto it = data_.find(key);
+    if (it == data_.end() || isKeyExpired(key)) {
+        return {};
+    }
+    
+    ZSetItem* zset_item = dynamic_cast<ZSetItem*>(it->second.get());
+    if (!zset_item) {
+        return {};
+    }
+    
+    return zset_item->zrange(start, stop);
+}
+
+std::vector<std::pair<Value, double>> StorageEngine::zrevrange(const Key& key, size_t start, size_t stop) {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    
+    auto it = data_.find(key);
+    if (it == data_.end() || isKeyExpired(key)) {
+        return {};
+    }
+    
+    ZSetItem* zset_item = dynamic_cast<ZSetItem*>(it->second.get());
+    if (!zset_item) {
+        return {};
+    }
+    
+    return zset_item->zrevrange(start, stop);
+}
+
+std::vector<std::pair<Value, double>> StorageEngine::zrangebyscore(const Key& key, double min, double max) {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    
+    auto it = data_.find(key);
+    if (it == data_.end() || isKeyExpired(key)) {
+        return {};
+    }
+    
+    ZSetItem* zset_item = dynamic_cast<ZSetItem*>(it->second.get());
+    if (!zset_item) {
+        return {};
+    }
+    
+    return zset_item->zrangebyscore(min, max);
+}
+
+std::vector<std::pair<Value, double>> StorageEngine::zrevrangebyscore(const Key& key, double max, double min) {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    
+    auto it = data_.find(key);
+    if (it == data_.end() || isKeyExpired(key)) {
+        return {};
+    }
+    
+    ZSetItem* zset_item = dynamic_cast<ZSetItem*>(it->second.get());
+    if (!zset_item) {
+        return {};
+    }
+    
+    return zset_item->zrevrangebyscore(max, min);
+}
+
+size_t StorageEngine::zcount(const Key& key, double min, double max) {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    
+    auto it = data_.find(key);
+    if (it == data_.end() || isKeyExpired(key)) {
+        return 0;
+    }
+    
+    ZSetItem* zset_item = dynamic_cast<ZSetItem*>(it->second.get());
+    if (!zset_item) {
+        return 0;
+    }
+    
+    return zset_item->zcount(min, max);
+}
+
+size_t StorageEngine::zcard(const Key& key) const {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    
+    auto it = data_.find(key);
+    if (it == data_.end() || isKeyExpired(key)) {
+        return 0;
+    }
+    
+    ZSetItem* zset_item = dynamic_cast<ZSetItem*>(it->second.get());
+    if (!zset_item) {
+        return 0;
+    }
+    
+    return zset_item->zcard();
 }
 
 } // namespace dkv

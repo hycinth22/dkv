@@ -96,6 +96,20 @@ public:
     bool sismember(const Key& key, const Value& member) const;
     size_t scard(const Key& key) const;
     
+    // 有序集合操作
+    size_t zadd(const Key& key, const std::vector<std::pair<Value, double>>& members_with_scores);
+    size_t zrem(const Key& key, const std::vector<Value>& members);
+    bool zscore(const Key& key, const Value& member, double& score);
+    bool zismember(const Key& key, const Value& member) const;
+    bool zrank(const Key& key, const Value& member, size_t& rank);
+    bool zrevrank(const Key& key, const Value& member, size_t& rank);
+    std::vector<std::pair<Value, double>> zrange(const Key& key, size_t start, size_t stop);
+    std::vector<std::pair<Value, double>> zrevrange(const Key& key, size_t start, size_t stop);
+    std::vector<std::pair<Value, double>> zrangebyscore(const Key& key, double min, double max);
+    std::vector<std::pair<Value, double>> zrevrangebyscore(const Key& key, double max, double min);
+    size_t zcount(const Key& key, double min, double max);
+    size_t zcard(const Key& key) const;
+    
     // 获取数据项
     DataItem* getDataItem(const Key& key);
     
@@ -111,6 +125,8 @@ private:
     std::unique_ptr<DataItem> createListItem(Timestamp expire_time);
     std::unique_ptr<DataItem> createSetItem();
     std::unique_ptr<DataItem> createSetItem(Timestamp expire_time);
+    std::unique_ptr<DataItem> createZSetItem();
+    std::unique_ptr<DataItem> createZSetItem(Timestamp expire_time);
 };
 
 // 数据项工厂

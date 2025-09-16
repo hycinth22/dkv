@@ -50,6 +50,9 @@ target_link_libraries(test_datatype_list dkv_lib)
 add_executable(test_datatype_set tests/test_datatype_set.cpp)
 target_link_libraries(test_datatype_set dkv_lib)
 
+add_executable(test_datatype_zset tests/test_datatype_zset.cpp)
+target_link_libraries(test_datatype_zset dkv_lib)
+
 add_executable(test_server_management tests/test_server_management.cpp)
 target_link_libraries(test_server_management dkv_lib)
 
@@ -70,6 +73,7 @@ add_test(NAME datatype_string_tests COMMAND test_datatype_string)
 add_test(NAME datatype_hash_tests COMMAND test_datatype_hash)
 add_test(NAME datatype_list_tests COMMAND test_datatype_list)
 add_test(NAME datatype_set_tests COMMAND test_datatype_set)
+add_test(NAME datatype_zset_tests COMMAND test_datatype_zset)
 add_test(NAME server_management_tests COMMAND test_server_management)
 add_test(NAME memory_allocator_tests COMMAND test_memory_allocator)
 add_test(NAME maxmemory_tests COMMAND test_maxmemory)

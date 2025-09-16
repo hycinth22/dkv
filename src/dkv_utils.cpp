@@ -46,6 +46,19 @@ CommandType Utils::stringToCommandType(const std::string& cmd) {
         {"SHUTDOWN", CommandType::SHUTDOWN},
         {"SAVE", CommandType::SAVE},
         {"BGSAVE", CommandType::BGSAVE},
+        // 有序集合命令
+        {"ZADD", CommandType::ZADD},
+        {"ZREM", CommandType::ZREM},
+        {"ZSCORE", CommandType::ZSCORE},
+        {"ZISMEMBER", CommandType::ZISMEMBER},
+        {"ZRANK", CommandType::ZRANK},
+        {"ZREVRANK", CommandType::ZREVRANK},
+        {"ZRANGE", CommandType::ZRANGE},
+        {"ZREVRANGE", CommandType::ZREVRANGE},
+        {"ZRANGEBYSCORE", CommandType::ZRANGEBYSCORE},
+        {"ZREVRANGEBYSCORE", CommandType::ZREVRANGEBYSCORE},
+        {"ZCOUNT", CommandType::ZCOUNT},
+        {"ZCARD", CommandType::ZCARD},
     };
     
     auto it = command_map.find(cmd);
@@ -92,6 +105,19 @@ std::string Utils::commandTypeToString(CommandType type) {
         {CommandType::SHUTDOWN, "SHUTDOWN"},
         {CommandType::SAVE, "SAVE"},
         {CommandType::BGSAVE, "BGSAVE"},
+        // 有序集合命令
+        {CommandType::ZADD, "ZADD"},
+        {CommandType::ZREM, "ZREM"},
+        {CommandType::ZSCORE, "ZSCORE"},
+        {CommandType::ZISMEMBER, "ZISMEMBER"},
+        {CommandType::ZRANK, "ZRANK"},
+        {CommandType::ZREVRANK, "ZREVRANK"},
+        {CommandType::ZRANGE, "ZRANGE"},
+        {CommandType::ZREVRANGE, "ZREVRANGE"},
+        {CommandType::ZRANGEBYSCORE, "ZRANGEBYSCORE"},
+        {CommandType::ZREVRANGEBYSCORE, "ZREVRANGEBYSCORE"},
+        {CommandType::ZCOUNT, "ZCOUNT"},
+        {CommandType::ZCARD, "ZCARD"},
     };
     
     auto it = type_map.find(type);
@@ -107,17 +133,24 @@ bool Utils::isNumeric(const std::string& str) {
         return false;
     }
     
-    // 检查第一个字符是否为数字或负号
+    // 检查第一个字符是否为数字、负号或小数点
     size_t start = 0;
-    if (str[0] == '-') {
+    if (str[0] == '-' || str[0] == '.') {
         if (str.length() == 1) {
             return false;
         }
         start = 1;
     }
     
-    // 检查其余字符是否都是数字
-    return std::all_of(str.begin() + start, str.end(), ::isdigit);
+    // 检查是否包含小数点
+    bool has_decimal = (str[start] == '.');
+    if (has_decimal && str.length() == 2) {
+        return false;
+    }
+    
+    // 检查其余字符是否都是数字或小数点
+    return std::all_of(str.begin() + start, str.end(), 
+                       [](char c) { return std::isdigit(c) || c == '.'; });
 }
 
 int64_t Utils::stringToInt(const std::string& str) {

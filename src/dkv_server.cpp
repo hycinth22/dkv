@@ -797,6 +797,277 @@ Response DKVServer::executeCommand(const Command& command) {
             return Response(ResponseStatus::OK, "Background saving started");
         }
         
+        // 有序集合命令
+        case CommandType::ZADD: {
+            if (command.args.size() < 3 || command.args.size() % 2 != 1) {
+                return Response(ResponseStatus::ERROR, "ZADD命令需要奇数个参数（1个键名 + 多个分数-成员对）");
+            }
+            
+            try {
+                std::string key = command.args[0];
+                std::vector<std::pair<Value, double>> members_with_scores;
+                
+                // 解析所有的分数-成员对
+                for (size_t i = 1; i < command.args.size(); i += 2) {
+                    double score = std::stod(command.args[i]);
+                    std::string member = command.args[i + 1];
+                    members_with_scores.push_back({member, score});
+                }
+                
+                size_t addedCount = storage_engine_->zadd(key, members_with_scores);
+                
+                if (addedCount > 0) {
+                    incDirty();
+                }
+                
+                return Response(ResponseStatus::OK, "", std::to_string(addedCount));
+            } catch (const std::invalid_argument&) {
+                return Response(ResponseStatus::ERROR, "无效的分数参数");
+            }
+        }
+        
+        case CommandType::ZREM: {
+            if (command.args.size() < 2) {
+                return Response(ResponseStatus::ERROR, "ZREM命令需要至少2个参数");
+            }
+            
+            std::string key = command.args[0];
+            std::vector<Value> members(command.args.begin() + 1, command.args.end());
+            size_t removedCount = storage_engine_->zrem(key, members);
+            
+            if (removedCount > 0) {
+                incDirty();
+            }
+            
+            return Response(ResponseStatus::OK, "", std::to_string(removedCount));
+        }
+        
+        case CommandType::ZSCORE: {
+            if (command.args.size() < 2) {
+                return Response(ResponseStatus::ERROR, "ZSCORE命令需要至少2个参数");
+            }
+            
+            std::string key = command.args[0];
+            std::string member = command.args[1];
+            double score = -1.0;
+            bool found = storage_engine_->zscore(key, member, score);
+            
+            if (!found) {
+                return Response(ResponseStatus::NOT_FOUND);
+            }
+            
+            return Response(ResponseStatus::OK, "", std::to_string(score));
+        }
+        
+        case CommandType::ZISMEMBER: {
+            if (command.args.size() < 2) {
+                return Response(ResponseStatus::ERROR, "ZISMEMBER命令需要至少2个参数");
+            }
+            
+            bool is_member = storage_engine_->zismember(command.args[0], command.args[1]);
+            return Response(ResponseStatus::OK, "", is_member ? "1" : "0");
+        }
+        
+        case CommandType::ZRANK: {
+            if (command.args.size() < 2) {
+                return Response(ResponseStatus::ERROR, "ZRANK命令需要至少2个参数");
+            }
+            
+            size_t rank = 0;
+            bool found = storage_engine_->zrank(command.args[0], command.args[1], rank);
+            if (!found) {
+                return Response(ResponseStatus::NOT_FOUND);
+            }
+            
+            return Response(ResponseStatus::OK, "", std::to_string(rank));
+        }
+        
+        case CommandType::ZREVRANK: {
+            if (command.args.size() < 2) {
+                return Response(ResponseStatus::ERROR, "ZREVRANK命令需要至少2个参数");
+            }
+            
+            size_t rank = 0;
+            bool found = storage_engine_->zrevrank(command.args[0], command.args[1], rank);
+            if (!found) {
+                return Response(ResponseStatus::NOT_FOUND);
+            }
+            
+            return Response(ResponseStatus::OK, "", std::to_string(rank));
+        }
+        
+        case CommandType::ZRANGE: {
+            if (command.args.size() < 3) {
+                return Response(ResponseStatus::ERROR, "ZRANGE命令需要至少3个参数");
+            }
+            
+            try {
+                size_t start = std::stoull(command.args[1]);
+                size_t stop = std::stoull(command.args[2]);
+                bool withScores = (command.args.size() >= 4 && command.args[3] == "WITHSCORES");
+                
+                std::vector<std::pair<Value, double>> members = 
+                    storage_engine_->zrange(command.args[0], start, stop);
+                
+                Response response;
+                response.status = ResponseStatus::OK;
+                
+                if (withScores) {
+                    std::vector<std::string> result;
+                    for (const auto& pair : members) {
+                        result.push_back(pair.first);
+                        result.push_back(std::to_string(pair.second));
+                    }
+                    response.data = RESPProtocol::serializeArray(result);
+                } else {
+                    std::vector<std::string> result;
+                    for (const auto& pair : members) {
+                        result.push_back(pair.first);
+                    }
+                    response.data = RESPProtocol::serializeArray(result);
+                }
+                
+                return response;
+            } catch (const std::invalid_argument&) {
+                return Response(ResponseStatus::ERROR, "无效的范围参数");
+            }
+        }
+        
+        case CommandType::ZREVRANGE: {
+            if (command.args.size() < 3) {
+                return Response(ResponseStatus::ERROR, "ZREVRANGE命令需要至少3个参数");
+            }
+            
+            try {
+                size_t start = std::stoull(command.args[1]);
+                size_t stop = std::stoull(command.args[2]);
+                bool withScores = (command.args.size() >= 4 && command.args[3] == "WITHSCORES");
+                
+                std::vector<std::pair<Value, double>> members = 
+                    storage_engine_->zrevrange(command.args[0], start, stop);
+                
+                Response response;
+                response.status = ResponseStatus::OK;
+                
+                if (withScores) {
+                    std::vector<std::string> result;
+                    for (const auto& pair : members) {
+                        result.push_back(pair.first);
+                        result.push_back(std::to_string(pair.second));
+                    }
+                    response.data = RESPProtocol::serializeArray(result);
+                } else {
+                    std::vector<std::string> result;
+                    for (const auto& pair : members) {
+                        result.push_back(pair.first);
+                    }
+                    response.data = RESPProtocol::serializeArray(result);
+                }
+                
+                return response;
+            } catch (const std::invalid_argument&) {
+                return Response(ResponseStatus::ERROR, "无效的范围参数");
+            }
+        }
+        
+        case CommandType::ZRANGEBYSCORE: {
+            if (command.args.size() < 3) {
+                return Response(ResponseStatus::ERROR, "ZRANGEBYSCORE命令需要至少3个参数");
+            }
+            
+            try {
+                double min = std::stod(command.args[1]);
+                double max = std::stod(command.args[2]);
+                bool withScores = (command.args.size() >= 4 && command.args[3] == "WITHSCORES");
+                
+                std::vector<std::pair<Value, double>> members = 
+                    storage_engine_->zrangebyscore(command.args[0], min, max);
+                
+                Response response;
+                response.status = ResponseStatus::OK;
+                
+                if (withScores) {
+                    std::vector<std::string> result;
+                    for (const auto& pair : members) {
+                        result.push_back(pair.first);
+                        result.push_back(std::to_string(pair.second));
+                    }
+                    response.data = RESPProtocol::serializeArray(result);
+                } else {
+                    std::vector<std::string> result;
+                    for (const auto& pair : members) {
+                        result.push_back(pair.first);
+                    }
+                    response.data = RESPProtocol::serializeArray(result);
+                }
+                
+                return response;
+            } catch (const std::invalid_argument&) {
+                return Response(ResponseStatus::ERROR, "无效的分数参数");
+            }
+        }
+        
+        case CommandType::ZREVRANGEBYSCORE: {
+            if (command.args.size() < 3) {
+                return Response(ResponseStatus::ERROR, "ZREVRANGEBYSCORE命令需要至少3个参数");
+            }
+            
+            try {
+                double max = std::stod(command.args[1]);
+                double min = std::stod(command.args[2]);
+                bool withScores = (command.args.size() >= 4 && command.args[3] == "WITHSCORES");
+                
+                std::vector<std::pair<Value, double>> members = 
+                    storage_engine_->zrevrangebyscore(command.args[0], max, min);
+                
+                Response response;
+                response.status = ResponseStatus::OK;
+                
+                if (withScores) {
+                    std::vector<std::string> result;
+                    for (const auto& pair : members) {
+                        result.push_back(pair.first);
+                        result.push_back(std::to_string(pair.second));
+                    }
+                    response.data = RESPProtocol::serializeArray(result);
+                } else {
+                    std::vector<std::string> result;
+                    for (const auto& pair : members) {
+                        result.push_back(pair.first);
+                    }
+                    response.data = RESPProtocol::serializeArray(result);
+                }
+                
+                return response;
+            } catch (const std::invalid_argument&) {
+                return Response(ResponseStatus::ERROR, "无效的分数参数");
+            }
+        }
+        
+        case CommandType::ZCOUNT: {
+            if (command.args.size() < 3) {
+                return Response(ResponseStatus::ERROR, "ZCOUNT命令需要至少3个参数");
+            }
+            
+            try {
+                double min = std::stod(command.args[1]);
+                double max = std::stod(command.args[2]);
+                size_t count = storage_engine_->zcount(command.args[0], min, max);
+                return Response(ResponseStatus::OK, "", std::to_string(count));
+            } catch (const std::invalid_argument&) {
+                return Response(ResponseStatus::ERROR, "无效的分数参数");
+            }
+        }
+        
+        case CommandType::ZCARD: {
+            if (command.args.empty()) {
+                return Response(ResponseStatus::ERROR, "ZCARD命令需要1个参数");
+            }
+            
+            size_t count = storage_engine_->zcard(command.args[0]);
+            return Response(ResponseStatus::OK, "", std::to_string(count));
+        }
+        
         default:
             return Response(ResponseStatus::INVALID_COMMAND);
     }

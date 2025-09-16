@@ -52,6 +52,19 @@ enum class CommandType {
     SHUTDOWN = 30,
     SAVE = 31,
     BGSAVE = 32,
+    // 有序集合命令
+    ZADD = 33,
+    ZREM = 34,
+    ZSCORE = 35,
+    ZISMEMBER = 36,
+    ZRANK = 37,
+    ZREVRANK = 38,
+    ZRANGE = 39,
+    ZREVRANGE = 40,
+    ZRANGEBYSCORE = 41,
+    ZREVRANGEBYSCORE = 42,
+    ZCOUNT = 43,
+    ZCARD = 44,
 };
 
 // 响应状态枚举

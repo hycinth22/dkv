@@ -451,6 +451,114 @@ def test_datatype_set(sock):
     response = send_command(sock, "EXISTS myset")
     assert_response(response, "0", "EXISTS myset (after DEL)")
 
+def test_datatype_zset(sock):
+    """测试有序集合数据类型相关命令"""
+    print("=" * 50)
+    print("测试有序集合数据类型相关命令")
+    print("=" * 50)
+    
+    # 测试ZADD - 添加单个元素
+    response = send_command(sock, "ZADD myzset 10 member1")
+    assert_response(response, "1", "ZADD myzset 10 member1")
+    
+    # 测试ZADD - 添加多个元素
+    response = send_command(sock, "ZADD myzset 20 member2 30 member3")
+    assert_response(response, "2", "ZADD myzset 20 member2 30 member3")
+    
+    # 测试ZADD - 添加已存在的元素（更新分数）
+    response = send_command(sock, "ZADD myzset 15 member1")
+    assert_response(response, "1", "ZADD myzset 15 member1 (update)")
+    
+    # 测试ZCARD - 获取集合大小
+    response = send_command(sock, "ZCARD myzset")
+    assert_response(response, "3", "ZCARD myzset")
+    
+    # 测试ZSCORE - 获取元素的分数
+    response = send_command(sock, "ZSCORE myzset member1")
+    assert_response(response, "15", "ZSCORE myzset member1")
+    
+    # 测试ZSCORE - 不存在的元素
+    response = send_command(sock, "ZSCORE myzset member4")
+    assert_response(response, "-1", "ZSCORE myzset member4 (non-existent)")
+    
+    # 测试ZISMEMBER - 检查元素是否存在
+    response = send_command(sock, "ZISMEMBER myzset member1")
+    assert_response(response, "1", "ZISMEMBER myzset member1")
+    
+    response = send_command(sock, "ZISMEMBER myzset member4")
+    assert_response(response, "0", "ZISMEMBER myzset member4 (non-existent)")
+    
+    # 测试ZRANK - 获取元素的排名（升序）
+    response = send_command(sock, "ZRANK myzset member1")
+    assert_response(response, "0", "ZRANK myzset member1")
+    
+    response = send_command(sock, "ZRANK myzset member2")
+    assert_response(response, "1", "ZRANK myzset member2")
+    
+    response = send_command(sock, "ZRANK myzset member3")
+    assert_response(response, "2", "ZRANK myzset member3")
+    
+    # 测试ZREVRANK - 获取元素的逆序排名（降序）
+    response = send_command(sock, "ZREVRANK myzset member3")
+    assert_response(response, "0", "ZREVRANK myzset member3")
+    
+    response = send_command(sock, "ZREVRANK myzset member2")
+    assert_response(response, "1", "ZREVRANK myzset member2")
+    
+    response = send_command(sock, "ZREVRANK myzset member1")
+    assert_response(response, "2", "ZREVRANK myzset member1")
+    
+    # 测试ZRANGE - 获取指定范围的元素（升序）
+    response = send_command(sock, "ZRANGE myzset 0 -1")
+    assert_response(response, "member1", "ZRANGE myzset 0 -1")
+    assert_response(response, "member2", "ZRANGE myzset 0 -1")
+    assert_response(response, "member3", "ZRANGE myzset 0 -1")
+    
+    # 测试ZREVRANGE - 获取指定范围的元素（降序）
+    response = send_command(sock, "ZREVRANGE myzset 0 -1")
+    assert_response(response, "member3", "ZREVRANGE myzset 0 -1")
+    assert_response(response, "member2", "ZREVRANGE myzset 0 -1")
+    assert_response(response, "member1", "ZREVRANGE myzset 0 -1")
+    
+    # 测试ZRANGEBYSCORE - 按分数范围获取元素
+    response = send_command(sock, "ZRANGEBYSCORE myzset 10 25")
+    assert_response(response, "member1", "ZRANGEBYSCORE myzset 10 25")
+    assert_response(response, "member2", "ZRANGEBYSCORE myzset 10 25")
+    
+    # 测试ZREVRANGEBYSCORE - 按分数范围逆序获取元素
+    response = send_command(sock, "ZREVRANGEBYSCORE myzset 25 10")
+    assert_response(response, "member2", "ZREVRANGEBYSCORE myzset 25 10")
+    assert_response(response, "member1", "ZREVRANGEBYSCORE myzset 25 10")
+    
+    # 测试ZCOUNT - 统计分数在指定范围内的元素个数
+    response = send_command(sock, "ZCOUNT myzset 10 25")
+    assert_response(response, "2", "ZCOUNT myzset 10 25")
+    
+    # 测试ZREM - 删除单个元素
+    response = send_command(sock, "ZREM myzset member2")
+    assert_response(response, "1", "ZREM myzset member2")
+    
+    response = send_command(sock, "ZCARD myzset")
+    assert_response(response, "2", "ZCARD myzset (after ZREM)")
+    
+    # 测试ZREM - 删除多个元素
+    response = send_command(sock, "ZREM myzset member1 member3")
+    assert_response(response, "2", "ZREM myzset member1 member3")
+    
+    response = send_command(sock, "ZCARD myzset")
+    assert_response(response, "0", "ZCARD myzset (after multi ZREM)")
+    
+    # 测试空集合
+    response = send_command(sock, "ZCARD non_existent_zset")
+    assert_response(response, "0", "ZCARD non_existent_zset")
+    
+    # 测试删除整个有序集合键
+    response = send_command(sock, "DEL myzset")
+    assert_response(response, "1", "DEL myzset")
+    
+    response = send_command(sock, "EXISTS myzset")
+    assert_response(response, "0", "EXISTS myzset (after DEL)")
+
 def test_server_management(sock):
     """测试服务器管理相关命令"""
     print("=" * 50)
@@ -514,6 +622,7 @@ def test_dkv_server():
         test_datatype_hash(sock)
         test_datatype_list(sock)
         test_datatype_set(sock)
+        test_datatype_zset(sock)
         test_server_management(sock)
         
         print("所有测试完成！")
