@@ -92,3 +92,25 @@ add_test(NAME rdb_tests COMMAND test_rdb)
 install(TARGETS dkv_server DESTINATION bin)
 install(TARGETS dkv_lib DESTINATION lib)
 install(DIRECTORY include/ DESTINATION include)
+
+add_custom_target(debug
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/debug
+    COMMAND ${CMAKE_COMMAND} -DCMAKE_BUILD_TYPE=Debug -S ${CMAKE_SOURCE_DIR} -B ${CMAKE_BINARY_DIR}/debug
+    COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR}/debug
+    COMMENT "Building Debug version in build/debug directory"
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+
+add_custom_target(release
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/release
+    COMMAND ${CMAKE_COMMAND} -DCMAKE_BUILD_TYPE=Release -S ${CMAKE_SOURCE_DIR} -B ${CMAKE_BINARY_DIR}/release
+    COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR}/release
+    COMMENT "Building Release version in build/release directory"
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+
+add_custom_target(clean-all
+    COMMAND ${CMAKE_COMMAND} -E remove_directory ${CMAKE_BINARY_DIR}
+    COMMENT "Removing all build directories"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
