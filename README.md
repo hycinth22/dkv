@@ -20,12 +20,12 @@ DKV是一个基于现代C++17实现的高性能键值（Key-Value）存储系统
 - **持久化机制**：支持RDB快照持久化
 - **高并发处理**：基于事件驱动的非阻塞I/O（epoll）
 - **线程安全**：使用读写锁保护数据访问，支持多客户端并发连接
-- **RESP协议兼容**：完全兼容Redis RESP协议，支持标准Redis客户端连接
+- **RESP协议兼容**：兼容Redis RESP协议，支持标准Redis客户端连接
 
 ### 命令支持
 - **字符串操作**：SET、GET、DEL、EXISTS
 - **数值操作**：INCR、DECR
-- **过期时间**：EXPIRE、TTL（部分实现）
+- **过期时间**：EXPIRE、TTL
 - **Hash操作**：HSET、HGET、HDEL、HGETALL等
 - **List操作**：LPUSH、LPOP、RPUSH、RPOP等
 - **Set操作**：SADD、SPOP、SMEMBERS等
