@@ -45,6 +45,8 @@ private:
     bool enable_aof_;         // 是否启用AOF持久化
     std::string aof_filename_; // AOF文件名
     std::string aof_fsync_policy_; // AOF fsync策略
+    int auto_aof_rewrite_percentage_; // AOF自动重写百分比
+    int auto_aof_rewrite_min_size_; // AOF自动重写最小大小
     std::unique_ptr<AOFPersistence> aof_persistence_; // AOF持久化管理器
 
 public:
@@ -77,6 +79,11 @@ public:
     
     // 获取最大内存限制
     size_t getMaxMemory() const;
+
+    // 获取存储引擎（用于AOF重写）
+    StorageEngine* getStorageEngine() const {
+        return storage_engine_.get();
+    }
     
     // RDB持久化配置方法
     void setRDBEnabled(bool enabled);

@@ -13,7 +13,8 @@ DKVServer::DKVServer(int port, size_t num_sub_reactors, size_t num_workers)
       port_(port), max_memory_(0), num_sub_reactors_(num_sub_reactors), num_workers_(num_workers),
       enable_rdb_(true), rdb_filename_("dump.rdb"), rdb_save_interval_(3600), rdb_save_changes_(1000),
       rdb_changes_(0), last_save_time_(std::chrono::system_clock::now()), rdb_save_running_(false),
-      enable_aof_(false), aof_filename_("appendonly.aof"), aof_fsync_policy_("everysec") {
+      enable_aof_(false), aof_filename_("appendonly.aof"), aof_fsync_policy_("everysec"),
+      auto_aof_rewrite_percentage_(100), auto_aof_rewrite_min_size_(64 * 1024 * 1024) {
 }
 
 DKVServer::~DKVServer() {
@@ -37,7 +38,9 @@ bool DKVServer::start() {
     if (enable_aof_) {
         DKV_LOG_INFO("初始化AOF持久化");
         aof_persistence_ = std::make_unique<AOFPersistence>();
-        
+        // 设置服务器引用，用于AOF重写
+        aof_persistence_->setServer(this);
+            
         // 设置fsync策略
         AOFPersistence::FsyncPolicy policy = AOFPersistence::FsyncPolicy::EVERYSEC;
         if (aof_fsync_policy_ == "always") {
@@ -45,9 +48,13 @@ bool DKVServer::start() {
         } else if (aof_fsync_policy_ == "never") {
             policy = AOFPersistence::FsyncPolicy::NEVER;
         }
-        
+            
         // 初始化AOF文件
         if (aof_persistence_->initialize(aof_filename_, policy)) {
+            // 设置AOF自动重写参数
+            aof_persistence_->setAutoRewriteParams(auto_aof_rewrite_percentage_, auto_aof_rewrite_min_size_ / (1024 * 1024));
+            DKV_LOG_INFO("AOF自动重写配置: 百分比={}%, 最小大小={}MB", auto_aof_rewrite_percentage_, auto_aof_rewrite_min_size_ / (1024 * 1024));
+            
             // 从AOF文件加载数据
             if (aof_persistence_->loadFromFile(this)) {
                 DKV_LOG_INFO("成功从AOF文件加载数据");
@@ -1283,6 +1290,25 @@ Response DKVServer::executeCommand(const Command& command) {
             }
         }
         
+        // AOF重写专用命令
+        case CommandType::RESTORE_HLL: {
+            if (command.args.size() < 2) {
+                return Response(ResponseStatus::ERROR, "RESTORE_HLL命令需要至少2个参数");
+            }
+            const Key& key = command.args[0];
+            const Value& serialized_data = command.args[1];
+            
+            // 创建HyperLogLogItem并反序列化数据
+            std::unique_ptr<HyperLogLogItem> hll_item = std::make_unique<HyperLogLogItem>();
+            hll_item->deserialize(serialized_data);
+            
+            // 存储HyperLogLogItem到存储引擎
+            storage_engine_->setDataItem(key, std::move(hll_item));
+            
+            DKV_LOG_DEBUG("RESTORE_HLL: 成功恢复键 ", key.c_str());
+            return Response(ResponseStatus::OK);
+        }
+        
         // HyperLogLog命令
         case CommandType::PFADD: {
             if (command.args.size() < 2) {
@@ -1406,6 +1432,28 @@ bool DKVServer::parseConfigFile(const std::string& config_file) {
                 aof_filename_ = value;
             } else if (key == "aof_fsync_policy") {
                 aof_fsync_policy_ = value;
+            } else if (key == "auto_aof_rewrite_percentage") {
+                auto_aof_rewrite_percentage_ = std::stoi(value);
+            } else if (key == "auto_aof_rewrite_min_size") {
+                // 处理大小单位，支持mb、gb等
+                std::string size_str = value;
+                std::string unit = "";
+                int multiplier = 1;
+                
+                if (size_str.length() > 2) {
+                    unit = size_str.substr(size_str.length() - 2);
+                    std::transform(unit.begin(), unit.end(), unit.begin(), ::tolower);
+                    
+                    if (unit == "mb") {
+                        multiplier = 1024 * 1024;
+                        size_str = size_str.substr(0, size_str.length() - 2);
+                    } else if (unit == "gb") {
+                        multiplier = 1024 * 1024 * 1024;
+                        size_str = size_str.substr(0, size_str.length() - 2);
+                    }
+                }
+                
+                auto_aof_rewrite_min_size_ = std::stoi(size_str) * multiplier;
             }
         }
     }

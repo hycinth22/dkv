@@ -125,6 +125,9 @@ public:
     // 获取数据项
     DataItem* getDataItem(const Key& key);
     
+    // 设置数据项（AOF重写恢复专用）
+    void setDataItem(const Key& key, std::unique_ptr<DataItem> item);
+    
 private:
     // 内部辅助方法
     bool isKeyExpired(const Key& key) const;

@@ -74,6 +74,8 @@ enum class CommandType {
     PFADD = 49,
     PFCOUNT = 50,
     PFMERGE = 51,
+    // AOF重写专用命令
+    RESTORE_HLL = 52,
 };
 
 // 响应状态枚举

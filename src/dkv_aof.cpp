@@ -8,16 +8,34 @@
 
 namespace dkv {
 
-AOFPersistence::AOFPersistence() : enabled_(false), recovering(false), fsync_policy_(FsyncPolicy::EVERYSEC), 
-                                     running_(false) {
+AOFPersistence::AOFPersistence() : server_(nullptr),
+    enabled_(false), recovering(false), 
+    fsync_policy_(FsyncPolicy::EVERYSEC), running_(false), 
+    rewrite_check_running_(false),
+    auto_rewrite_percentage_(100), auto_rewrite_min_size_mb_(64), last_rewrite_size_(0) {
 }
 
 AOFPersistence::~AOFPersistence() {
     running_ = false;
+    
+    // 通知并重写检查线程
+    rewrite_check_running_ = false;
+    rewrite_check_cv_.notify_one();
+    
     if (bg_fsync_thread_.joinable()) {
         bg_fsync_thread_.join();
     }
+    
+    if (bg_rewrite_check_thread_.joinable()) {
+        bg_rewrite_check_thread_.join();
+    }
+    
     close();
+}
+
+void AOFPersistence::setServer(DKVServer* server) {
+    server_ = server;
+    DKV_LOG_INFO("Server reference set for AOF persistence");
 }
 
 bool AOFPersistence::initialize(const std::string& filename, FsyncPolicy fsync_policy) {
@@ -44,6 +62,10 @@ bool AOFPersistence::initialize(const std::string& filename, FsyncPolicy fsync_p
         running_ = true;
         bg_fsync_thread_ = std::thread(&AOFPersistence::bgFsyncThreadFunc, this);
     }
+    
+    // 启动后台重写检查线程
+    rewrite_check_running_ = true;
+    bg_rewrite_check_thread_ = std::thread(&AOFPersistence::bgRewriteCheckThreadFunc, this);
     
     DKV_LOG_INFO("AOF initialized successfully with file: ", filename_);
     return true;
@@ -243,12 +265,42 @@ bool AOFPersistence::rewrite(StorageEngine* storage_engine, const std::string& t
                 DKV_LOG_DEBUG("Rewriting zset key: ", key);
             } else if (dynamic_cast<BitmapItem*>(item)) {
                 // 处理位图类型
-                // 注意：这里简化处理，实际应该获取位图的所有设置位
-                DKV_LOG_DEBUG("Rewriting bitmap key: ", key);
+                BitmapItem* bitmap_item = dynamic_cast<BitmapItem*>(item);
+                if (bitmap_item) {
+                    size_t bitmap_size = bitmap_item->size() * 8; // 转换为位数
+                    
+                    // 遍历位图中的每一位
+                    for (size_t offset = 0; offset < bitmap_size; ++offset) {
+                        if (bitmap_item->getBit(offset)) {
+                            // 对于值为1的位，添加SETBIT命令
+                            Command command(CommandType::SETBIT, {key, std::to_string(offset), "1"});
+                            std::vector<std::string> command_parts;
+                            command_parts.push_back(Utils::commandTypeToString(command.type));
+                            command_parts.insert(command_parts.end(), command.args.begin(), command.args.end());
+                            std::string serialized = RESPProtocol::serializeArray(command_parts);
+                            temp_file.write(serialized.c_str(), serialized.size());
+                        }
+                    }
+                    DKV_LOG_DEBUG("Rewriting bitmap key: ", key, " with ", bitmap_item->bitCount(), " bits set");
+                }
             } else if (dynamic_cast<HyperLogLogItem*>(item)) {
                 // 处理HyperLogLog类型
-                // 注意：这里简化处理，实际应该获取HyperLogLog的状态
-                DKV_LOG_DEBUG("Rewriting hyperloglog key: ", key);
+                HyperLogLogItem* hll_item = dynamic_cast<HyperLogLogItem*>(item);
+                if (hll_item) {
+                    // 序列化HyperLogLog对象的状态
+                    std::string serialized = hll_item->serialize();
+                    
+                    // 写入特殊命令来恢复HyperLogLog状态
+                    // 注意：这需要在加载时特殊处理
+                    Command command(CommandType::RESTORE_HLL, {key, serialized});
+                    std::vector<std::string> command_parts;
+                    command_parts.push_back(Utils::commandTypeToString(command.type));
+                    command_parts.insert(command_parts.end(), command.args.begin(), command.args.end());
+                    std::string command_serialized = RESPProtocol::serializeArray(command_parts);
+                    temp_file.write(command_serialized.c_str(), command_serialized.size());
+                    
+                    DKV_LOG_DEBUG("Rewriting hyperloglog key: ", key, " with cardinality ", hll_item->count());
+                }
             }
             
             // 如果键有过期时间，添加EXPIRE命令
@@ -272,6 +324,9 @@ bool AOFPersistence::rewrite(StorageEngine* storage_engine, const std::string& t
 
         // 替换原AOF文件
         std::filesystem::rename(temp_filename, filename_);
+
+        // 更新上次重写后的文件大小
+        last_rewrite_size_ = getFileSize();
 
         DKV_LOG_INFO("AOF rewrite completed successfully");
         return true;
@@ -318,6 +373,120 @@ void AOFPersistence::bgFsyncThreadFunc() {
     }
     
     DKV_LOG_INFO("Background fsync thread stopped");
+}
+
+void AOFPersistence::bgRewriteCheckThreadFunc() {
+    DKV_LOG_INFO("Background rewrite check thread started");
+    
+    while (rewrite_check_running_) {
+        // 使用条件变量等待，允许提前唤醒
+        std::unique_lock<std::mutex> lock(rewrite_check_mutex_);
+        auto status = rewrite_check_cv_.wait_for(
+            lock, 
+            std::chrono::seconds(30), 
+            [this] { return !rewrite_check_running_; }
+        );
+        
+        // 如果是因为超时醒来，执行检查
+        if (!status && enabled_ && !recovering) {
+            // 检查是否需要重写
+            if (shouldRewrite()) {
+                DKV_LOG_INFO("Background rewrite check: AOF file needs to be rewritten");
+                
+                // 如果有服务器引用，执行异步重写
+                if (server_) {
+                    asyncRewrite(server_);
+                } else {
+                    DKV_LOG_WARNING("Cannot perform async rewrite: missing server instance reference");
+                }
+            }
+        }
+    }
+    
+    DKV_LOG_INFO("Background rewrite check thread stopped");
+}
+
+void AOFPersistence::asyncRewrite(DKVServer* server) {
+    if (!server || !enabled_ || recovering) {
+        DKV_LOG_ERROR("Invalid parameters for async AOF rewrite");
+        return;
+    }
+    
+    // 创建并启动新线程执行重写
+    std::thread([this, server]() {
+        DKV_LOG_INFO("Starting async AOF rewrite");
+        
+        try {
+            // 使用临时文件名
+            std::string temp_filename = filename_ + ".rewrite";
+            
+            // 执行重写
+            if (rewrite(server->getStorageEngine(), temp_filename)) {
+                DKV_LOG_INFO("Async AOF rewrite completed successfully");
+            } else {
+                DKV_LOG_ERROR("Async AOF rewrite failed");
+            }
+        } catch (const std::exception& e) {
+            DKV_LOG_ERROR("Exception during async AOF rewrite: ", e.what());
+        }
+        
+        DKV_LOG_INFO("Async AOF rewrite thread completed");
+    }).detach(); // 使用detach使线程在后台独立运行
+}
+
+void AOFPersistence::setAutoRewriteParams(double percentage, size_t min_size_mb) {
+    auto_rewrite_percentage_ = percentage;
+    auto_rewrite_min_size_mb_ = min_size_mb;
+    DKV_LOG_INFO("AOF auto-rewrite parameters set: percentage=", percentage, ", min_size=", min_size_mb, "MB");
+}
+
+bool AOFPersistence::shouldRewrite() {
+    if (!enabled_ || recovering) {
+        return false;
+    }
+
+    size_t current_size = getFileSize();
+    size_t min_size_bytes = auto_rewrite_min_size_mb_ * 1024 * 1024; // 转换为字节
+
+    // 检查是否满足最小文件大小条件
+    if (current_size < min_size_bytes) {
+        DKV_LOG_DEBUG("AOF file size (", current_size, ") is below min size threshold (", min_size_bytes, ")");
+        return false;
+    }
+
+    // 如果是第一次重写，设置上次重写大小为当前大小
+    if (last_rewrite_size_ == 0) {
+        last_rewrite_size_ = current_size;
+        DKV_LOG_DEBUG("Initializing last_rewrite_size to ", current_size);
+        return false;
+    }
+
+    // 检查是否满足百分比增长条件
+    double growth_percentage = ((double)(current_size - last_rewrite_size_) / last_rewrite_size_) * 100;
+    bool should_rewrite = growth_percentage >= auto_rewrite_percentage_;
+    
+    DKV_LOG_DEBUG("AOF auto-rewrite check: current_size=", current_size, ", last_rewrite_size=", 
+                 last_rewrite_size_, ", growth_percentage=", growth_percentage, ", should_rewrite=", should_rewrite);
+    
+    return should_rewrite;
+}
+
+size_t AOFPersistence::getFileSize() {
+    std::lock_guard<std::mutex> lock(file_mutex_);
+    
+    // 保存当前文件位置
+    std::streampos current_pos = aof_file_.tellp();
+    
+    // 移动到文件末尾
+    aof_file_.seekp(0, std::ios::end);
+    
+    // 获取文件大小
+    std::streampos size = aof_file_.tellp();
+    
+    // 恢复到原来的位置
+    aof_file_.seekp(current_pos);
+    
+    return static_cast<size_t>(size);
 }
 
 } // namespace dkv

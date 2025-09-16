@@ -7,6 +7,7 @@
 #include <mutex>
 #include <atomic>
 #include <thread>
+#include <condition_variable>
 
 namespace dkv {
 class DKVServer;
@@ -24,6 +25,9 @@ public:
 
     AOFPersistence();
     ~AOFPersistence();
+    
+    // 设置服务器引用
+    void setServer(DKVServer* server);
 
     // 初始化AOF文件
     bool initialize(const std::string& filename, FsyncPolicy fsync_policy = FsyncPolicy::EVERYSEC);
@@ -39,11 +43,25 @@ public:
 
     // 执行AOF重写
     bool rewrite(StorageEngine* storage_engine, const std::string& temp_filename);
+    
+    // 异步执行AOF重写
+    void asyncRewrite(DKVServer* server);
 
     // 获取AOF当前状态
     bool isEnabled() const { return enabled_; }
 
+    // 设置自动重写参数
+    void setAutoRewriteParams(double percentage, size_t min_size_mb);
+
+    // 检查是否需要自动重写
+    bool shouldRewrite();
+
+    // 获取当前AOF文件大小
+    size_t getFileSize();
+
 private:
+    // 服务器引用
+    DKVServer* server_;
     // AOF文件相关
     std::ofstream aof_file_;
     std::string filename_;
@@ -57,6 +75,17 @@ private:
     // 后台fsync线程相关
     std::thread bg_fsync_thread_;
     std::atomic<bool> running_;
+    
+    // 后台重写检查线程相关
+    std::thread bg_rewrite_check_thread_;
+    std::atomic<bool> rewrite_check_running_;
+    std::condition_variable rewrite_check_cv_;
+    std::mutex rewrite_check_mutex_;
+    
+    // 自动重写相关参数
+    double auto_rewrite_percentage_;  // 自动重写百分比阈值
+    size_t auto_rewrite_min_size_mb_; // 自动重写最小文件大小(MB)
+    size_t last_rewrite_size_;        // 上次重写后的文件大小(字节)
 
     // 同步文件到磁盘
     void fsyncIfNeeded();
@@ -69,6 +98,9 @@ private:
     
     // 后台fsync线程函数
     void bgFsyncThreadFunc();
+    
+    // 后台重写检查线程函数
+    void bgRewriteCheckThreadFunc();
 };
 
 } // namespace dkv

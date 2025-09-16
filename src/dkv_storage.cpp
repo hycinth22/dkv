@@ -741,6 +741,20 @@ DataItem* StorageEngine::getDataItem(const Key& key) {
     return it->second.get();
 }
 
+void StorageEngine::setDataItem(const Key& key, std::unique_ptr<DataItem> item) {
+    std::unique_lock<std::shared_mutex> lock(mutex_);
+    
+    auto it = data_.find(key);
+    if (it == data_.end()) {
+        // 新键
+        data_[key] = std::move(item);
+        total_keys_++;
+    } else {
+        // 更新现有键
+        data_[key] = std::move(item);
+    }
+}
+
 size_t StorageEngine::zadd(const Key& key, const std::vector<std::pair<Value, double>>& members_with_scores) {
     std::unique_lock<std::shared_mutex> lock(mutex_);
     
