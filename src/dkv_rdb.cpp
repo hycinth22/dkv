@@ -1,6 +1,7 @@
 #include "dkv_rdb.hpp"
 #include "dkv_datatypes.hpp"
 #include "dkv_utils.hpp"
+#include "dkv_logger.hpp"
 #include <iostream>
 #include <chrono>
 #include <sstream>
@@ -11,13 +12,13 @@ namespace dkv {
 // 保存数据到RDB文件
 bool RDBPersistence::saveToFile(StorageEngine* storage_engine, const std::string& filename) {
     if (!storage_engine) {
-        std::cerr << "Error: Storage engine is null" << std::endl;
+        DKV_LOG_ERROR("Error: Storage engine is null");
         return false;
     }
     
     std::ofstream file(filename, std::ios::binary);
     if (!file.is_open()) {
-        std::cerr << "Error: Failed to open file " << filename << " for writing" << std::endl;
+        DKV_LOG_ERROR("Error: Failed to open file ", filename.c_str(), " for writing");
         return false;
     }
     
@@ -45,20 +46,20 @@ bool RDBPersistence::saveToFile(StorageEngine* storage_engine, const std::string
     }
     
     file.close();
-    std::cout << "Successfully saved data to RDB file: " << filename << std::endl;
+    DKV_LOG_INFO("Successfully saved data to RDB file: ", filename.c_str());
     return true;
 }
 
 // 从RDB文件加载数据
 bool RDBPersistence::loadFromFile(StorageEngine* storage_engine, const std::string& filename) {
     if (!storage_engine) {
-        std::cerr << "Error: Storage engine is null" << std::endl;
+        DKV_LOG_ERROR("Error: Storage engine is null");
         return false;
     }
     
     std::ifstream file(filename, std::ios::binary);
     if (!file.is_open()) {
-        std::cerr << "Error: Failed to open file " << filename << " for reading" << std::endl;
+        DKV_LOG_ERROR("Error: Failed to open file ", filename.c_str(), " for reading");
         return false;
     }
     
@@ -80,7 +81,7 @@ bool RDBPersistence::loadFromFile(StorageEngine* storage_engine, const std::stri
     }
     
     file.close();
-    std::cout << "Successfully loaded data from RDB file: " << filename << std::endl;
+    DKV_LOG_INFO("Successfully loaded data from RDB file: ", filename.c_str());
     return true;
 }
 
@@ -103,14 +104,14 @@ bool RDBPersistence::readHeader(std::ifstream& file) {
     magic[9] = '\0';
     
     if (strcmp(magic, RDB_MAGIC_STRING) != 0) {
-        std::cerr << "Error: Invalid RDB file format" << std::endl;
+        DKV_LOG_ERROR("Error: Invalid RDB file format");
         return false;
     }
     
     // 读取版本号
     uint32_t version = static_cast<uint32_t>(readInt(file));
     if (version != RDB_VERSION) {
-        std::cerr << "Error: Unsupported RDB version: " << version << ", expected: " << RDB_VERSION << std::endl;
+        DKV_LOG_ERROR("Error: Unsupported RDB version: ", version, ", expected:", RDB_VERSION);
         return false;
     }
     
@@ -193,7 +194,7 @@ bool RDBPersistence::readKeyValue(std::ifstream& file, StorageEngine* storage_en
     }
     
     if (!item) {
-        std::cerr << "Error: Failed to create DataItem of type " << static_cast<int>(type) << std::endl;
+        DKV_LOG_ERROR("Error: Failed to create DataItem of type ", static_cast<int>(type));
         return false;
     }
     
@@ -265,7 +266,7 @@ bool RDBPersistence::readKeyValue(std::ifstream& file, StorageEngine* storage_en
             break;
         }
         default:
-            std::cerr << "Warning: Unknown data type: " << static_cast<int>(type) << std::endl;
+            DKV_LOG_WARNING("Warning: Unknown data type: ", static_cast<int>(type));
             break;
     }
     

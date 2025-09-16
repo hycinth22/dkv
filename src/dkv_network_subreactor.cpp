@@ -3,6 +3,7 @@
 #include "dkv_storage.hpp"
 #include "dkv_resp.hpp"
 #include "dkv_utils.hpp"
+#include "dkv_logger.hpp"
 #include <iostream>
 #include <cstring>
 #include <string.h>
@@ -21,7 +22,7 @@ SubReactor::SubReactor(WorkerThreadPool* worker_pool) :
     // 创建epoll实例
     epoll_fd_ = epoll_create1(0);
     if (epoll_fd_ < 0) {
-        std::cerr << "创建epoll失败: " << strerror(errno) << std::endl;
+        DKV_LOG_ERROR("创建epoll失败: ", strerror(errno));
     }
 }
 
@@ -71,13 +72,13 @@ void SubReactor::stop() {
 
 void SubReactor::addClient(int client_fd, const sockaddr_in& client_addr) {
     if (!setNonBlocking(client_fd)) {
-        std::cerr << "设置客户端连接为非阻塞失败" << std::endl;
+        DKV_LOG_ERROR("设置客户端连接为非阻塞失败");
         close(client_fd);
         return;
     }
     
     if (!addEpollEvent(client_fd, EPOLLIN | EPOLLET)) {
-        std::cerr << "添加客户端事件失败" << std::endl;
+        DKV_LOG_ERROR("添加客户端事件失败");
         close(client_fd);
         return;
     }
@@ -86,8 +87,7 @@ void SubReactor::addClient(int client_fd, const sockaddr_in& client_addr) {
     auto client = std::make_unique<ClientConnection>(client_fd, client_addr);
     clients_[client_fd] = std::move(client);
     
-    std::cout << "子Reactor添加客户端连接: " << inet_ntoa(client_addr.sin_addr) 
-              << ":" << ntohs(client_addr.sin_port) << std::endl;
+    DKV_LOG_INFO("子Reactor添加客户端连接: ", inet_ntoa(client_addr.sin_addr), ":", ntohs(client_addr.sin_port));
 }
 
 void SubReactor::handleCommandResult(int client_fd, const Response& response) {
@@ -104,7 +104,7 @@ void SubReactor::eventLoop() {
         
         if (event_count < 0) {
             if (errno != EINTR) {
-                std::cerr << "epoll_wait失败: " << strerror(errno) << std::endl;
+                DKV_LOG_ERROR("epoll_wait失败: ", strerror(errno));
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
             }
             continue;
@@ -151,7 +151,7 @@ void SubReactor::handleClientData(int client_fd) {
     }
     
     if (bytes_read < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
-        std::cerr << "读取客户端数据失败: " << strerror(errno) << std::endl;
+        DKV_LOG_ERROR("读取客户端数据失败: ", strerror(errno));
         handleClientDisconnect(client_fd);
         return;
     }
@@ -159,17 +159,17 @@ void SubReactor::handleClientData(int client_fd) {
     // 解析命令
     size_t pos = 0;
     while (pos < client->read_buffer.length()) {
-        std::cout << "SubReactor::handleClientData 解析命令前: " << client->read_buffer.substr(pos) << std::endl;
+        DKV_LOG_DEBUG("SubReactor::handleClientData 解析命令前: ", client->read_buffer.substr(pos));
         Command command = RESPProtocol::parseCommand(client->read_buffer, pos);
-        std::cout << "SubReactor::handleClientData 解析命令后: " << Utils::commandTypeToString(command.type) << std::endl;
+        DKV_LOG_DEBUG("SubReactor::handleClientData 解析命令后: ", Utils::commandTypeToString(command.type));
         for (const auto& arg : command.args) {
-            std::cout << "SubReactor::handleClientData 解析命令参数: " << arg << std::endl;
+            DKV_LOG_DEBUG("SubReactor::handleClientData 解析命令参数: ", arg);
         }
         if (command.type == CommandType::UNKNOWN) {
             break; // 等待更多数据
         }
         
-        std::cout << "子Reactor解析到命令: " << Utils::commandTypeToString(command.type) << std::endl;
+        DKV_LOG_DEBUG("子Reactor解析到命令: ", Utils::commandTypeToString(command.type));
         
         // 创建命令任务并提交到线程池
         if (worker_pool_) {
@@ -198,8 +198,10 @@ void SubReactor::handleClientDisconnect(int client_fd) {
 void SubReactor::handleClientDisconnect_locked(int client_fd) {
     auto it = clients_.find(client_fd);
     if (it != clients_.end()) {
-        std::cout << "子Reactor客户端断开连接: " << inet_ntoa(it->second->addr.sin_addr) 
-                  << ":" << ntohs(it->second->addr.sin_port) << std::endl;
+        DKV_LOG_INFO("子Reactor客户端断开连接: ", 
+                     inet_ntoa(it->second->addr.sin_addr), 
+                     ":",
+                     ntohs(it->second->addr.sin_port));
         removeEpollEvent(client_fd);
         close(client_fd);
         clients_.erase(it);
@@ -217,7 +219,7 @@ void SubReactor::sendResponse(int client_fd, const Response& response) {
     
     ssize_t bytes_sent = write(client_fd, resp_str.c_str(), resp_str.length());
     if (bytes_sent < 0) {
-        std::cerr << "子Reactor发送响应失败" << std::endl;
+        DKV_LOG_ERROR("子Reactor发送响应失败");
         // 发送失败可能意味着连接已断开，尝试清理
         handleClientDisconnect(client_fd);
     }

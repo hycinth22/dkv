@@ -1,5 +1,6 @@
 #include "dkv_server.hpp"
 #include "dkv_memory_allocator.hpp"
+#include "dkv_logger.hpp"
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -44,19 +45,19 @@ bool DKVServer::start() {
     
     // 启动网络服务器
     if (!network_server_->start()) {
-        std::cerr << "启动网络服务失败" << std::endl;
+        DKV_LOG_ERROR("启动网络服务失败");
         stop();
         return false;
     }
     
-    std::cout << "DKV服务启动成功" << std::endl;
+    DKV_LOG_INFO("DKV服务启动成功");
     return true;
 }
 
 void DKVServer::loadRDBFromConfig() {
     // 检查是否启用了RDB持久化
     if (!enable_rdb_) {
-        std::cout << "RDB持久化已禁用" << std::endl;
+        DKV_LOG_INFO("RDB持久化已禁用");
         return;
     }
     
@@ -65,9 +66,9 @@ void DKVServer::loadRDBFromConfig() {
     
     if (storage_engine_ && !rdb_file.empty()) {
         if (!storage_engine_->loadRDB(rdb_file)) {
-            std::cout << "警告：无法加载RDB文件 " << rdb_file << "，可能是文件不存在或格式不正确" << std::endl;
+            DKV_LOG_WARNING("无法加载RDB文件 ", rdb_file.c_str(), "，可能是文件不存在或格式不正确");
         } else {
-            std::cout << "成功从RDB文件 " << rdb_file << " 加载数据" << std::endl;
+            DKV_LOG_INFO("成功从RDB文件 ", rdb_file.c_str(), " 加载数据");
             
             // 更新上次保存时间和重置变更计数
             last_save_time_ = std::chrono::system_clock::now();
@@ -81,6 +82,7 @@ void DKVServer::stop() {
         return;
     }
     
+    DKV_LOG_INFO("开始停止DKV服务器");
     running_ = false;
     cleanup_running_ = false;
     
@@ -88,37 +90,37 @@ void DKVServer::stop() {
     saveRDBFromConfig();
     
     // 等待工作线程结束
-    std::cout << "等待工作线程结束" << std::endl;
+    DKV_LOG_INFO("等待工作线程结束");
     if (worker_pool_) {
         worker_pool_->stop();
     }
 
     // 停止网络服务器
-    std::cout << "停止网络服务" << std::endl;
+    DKV_LOG_INFO("停止网络服务");
     if (network_server_) {
         network_server_->stop();
     }
     
     // 等待清理线程结束
-    std::cout << "等待清理线程结束" << std::endl;
+    DKV_LOG_INFO("等待清理线程结束");
     if (cleanup_thread_.joinable()) {
         cleanup_thread_.join();
     }
     
     // 停止RDB自动保存线程
-    std::cout << "等待RDB自动保存线程结束" << std::endl;
+    DKV_LOG_INFO("等待RDB自动保存线程结束");
     rdb_save_running_ = false;
     if (rdb_save_thread_.joinable()) {
         rdb_save_thread_.join();
     }
     
-    std::cout << "DKV服务已停止" << std::endl;
+    DKV_LOG_INFO("DKV服务已停止");
 }
 
 void DKVServer::saveRDBFromConfig() {
     // 检查是否启用了RDB持久化
     if (!enable_rdb_) {
-        std::cout << "RDB持久化已禁用" << std::endl;
+        DKV_LOG_INFO("RDB持久化已禁用");
         return;
     }
     
@@ -127,9 +129,9 @@ void DKVServer::saveRDBFromConfig() {
     
     if (storage_engine_ && !rdb_file.empty()) {
         if (!storage_engine_->saveRDB(rdb_file)) {
-            std::cerr << "警告：无法保存RDB文件 " << rdb_file << std::endl;
+            DKV_LOG_WARNING("无法保存RDB文件 ", rdb_file.c_str());
         } else {
-            std::cout << "成功将数据保存到RDB文件 " << rdb_file << std::endl;
+            DKV_LOG_INFO("成功将数据保存到RDB文件 ", rdb_file.c_str());
             
             // 更新上次保存时间和重置变更计数
                 last_save_time_ = std::chrono::system_clock::now();
@@ -193,14 +195,21 @@ void DKVServer::setRDBSaveChanges(uint64_t changes) {
 }
 
 bool DKVServer::initialize() {
+    DKV_LOG_INFO("开始初始化DKV服务器");
+    
     // 创建存储引擎实例
+    DKV_LOG_DEBUG("创建存储引擎实例");
     storage_engine_ = std::make_unique<StorageEngine>();
     
     // 创建工作线程池
+    DKV_LOG_DEBUG("创建工作线程池，线程数: ", num_workers_);
     worker_pool_ = std::make_unique<WorkerThreadPool>(this, num_workers_);
 
     // 创建网络服务实例（使用多线程Reactor模式）
+    DKV_LOG_DEBUG("创建网络服务实例，端口: ", port_, ", SubReactor数量: ", num_sub_reactors_);
     network_server_ = std::make_unique<NetworkServer>(worker_pool_.get(), port_, num_sub_reactors_);
+    
+    DKV_LOG_INFO("DKV服务器初始化完成");
     return true;
 }
 
@@ -230,6 +239,7 @@ Response DKVServer::executeCommand(const Command& command) {
     if (mayAllocateMemory && max_memory_ > 0) {
         size_t currentUsage = getMemoryUsage();
         if (currentUsage >= max_memory_) {
+            DKV_LOG_WARNING("内存使用已达到上限，拒绝执行命令");
             return Response(ResponseStatus::ERROR, "OOM command not allowed when used memory > 'maxmemory'");
         }
     }
@@ -239,12 +249,17 @@ Response DKVServer::executeCommand(const Command& command) {
             if (command.args.size() < 2) {
                 return Response(ResponseStatus::ERROR, "SET命令需要至少2个参数");
             }
+            
+            std::string key = command.args[0];
+            std::string value = command.args[1];
             bool success;
+            
             if (command.args.size() >= 4 && command.args[2] == "PX") {
                 // 支持 PX 参数设置毫秒过期时间
                 try {
                     int64_t ms = std::stoll(command.args[3]);
-                    success = storage_engine_->set(command.args[0], command.args[1], ms / 1000);
+                    success = storage_engine_->set(key, value, ms / 1000);
+                    DKV_LOG_DEBUG("设置键 ", key.c_str(), " 带有过期时间 ", ms, " 毫秒");
                 } catch (const std::invalid_argument&) {
                     return Response(ResponseStatus::ERROR, "无效的过期时间");
                 }
@@ -252,29 +267,37 @@ Response DKVServer::executeCommand(const Command& command) {
                 // 支持 EX 参数设置秒过期时间
                 try {
                     int64_t seconds = std::stoll(command.args[3]);
-                    success = storage_engine_->set(command.args[0], command.args[1], seconds);
+                    success = storage_engine_->set(key, value, seconds);
+                    DKV_LOG_DEBUG("设置键 ", key.c_str(), " 带有过期时间 ", seconds, " 秒");
                 } catch (const std::invalid_argument&) {
                     return Response(ResponseStatus::ERROR, "无效的过期时间");
                 }
             } else {
-                success = storage_engine_->set(command.args[0], command.args[1]);
+                success = storage_engine_->set(key, value);
+                DKV_LOG_DEBUG("设置键 ", key.c_str());
             }
             
             if (success) {
                 incDirty();
+                return Response(ResponseStatus::OK, "", "OK");
+            } else {
+                DKV_LOG_ERROR("设置键值失败: ", key.c_str());
+                return Response(ResponseStatus::ERROR, "设置键值失败");
             }
-            
-            return Response(success ? ResponseStatus::OK : ResponseStatus::ERROR);
         }
         
         case CommandType::GET: {
             if (command.args.empty()) {
                 return Response(ResponseStatus::ERROR, "GET命令需要1个参数");
             }
-            std::string value = storage_engine_->get(command.args[0]);
+            std::string key = command.args[0];
+            DKV_LOG_DEBUG("获取键 ", key.c_str(), " 的值");
+            std::string value = storage_engine_->get(key);
             if (value.empty()) {
+                DKV_LOG_DEBUG("键 ", key.c_str(), " 不存在");
                 return Response(ResponseStatus::NOT_FOUND);
             }
+            DKV_LOG_DEBUG("获取键 ", key.c_str(), " 的值成功");
             return Response(ResponseStatus::OK, "", value);
         }
         
@@ -289,7 +312,14 @@ Response DKVServer::executeCommand(const Command& command) {
                 if (success) {
                     deleted_count++;
                     incDirty();
+                    DKV_LOG_DEBUG("删除键 ", key.c_str(), " 成功");
+                } else {
+                    DKV_LOG_DEBUG("键 ", key.c_str(), " 不存在，删除失败");
                 }
+            }
+            
+            if (deleted_count > 0) {
+                DKV_LOG_DEBUG("成功删除 ", deleted_count, " 个键");
             }
             
             return Response(ResponseStatus::OK, "", std::to_string(deleted_count));
@@ -758,9 +788,9 @@ Response DKVServer::executeCommand(const Command& command) {
                     // 更新上次保存时间和重置变更计数
                     last_save_time_ = std::chrono::system_clock::now();
                     rdb_changes_ = 0;
-                    std::cout << "异步RDB保存成功" << std::endl;
+                    DKV_LOG_INFO("异步RDB保存成功");
                 } else {
-                    std::cerr << "异步RDB保存失败" << std::endl;
+                    DKV_LOG_ERROR("异步RDB保存失败");
                 }
             });
             save_thread.detach();
@@ -788,7 +818,7 @@ void DKVServer::cleanupExpiredKeys() {
 bool DKVServer::parseConfigFile(const std::string& config_file) {
     std::ifstream file(config_file);
     if (!file.is_open()) {
-        std::cerr << "无法打开配置文件: " << config_file << std::endl;
+        DKV_LOG_ERROR("无法打开配置文件: {}", config_file);
         return false;
     }
     
@@ -854,9 +884,9 @@ void DKVServer::rdbAutoSaveThread() {
             if (storage_engine_->saveRDB(rdb_filename_)) {
                 last_save_time_ = now;
                 rdb_changes_ = 0;
-                std::cout << "自动保存RDB文件成功" << std::endl;
+                DKV_LOG_INFO("自动保存RDB文件成功");
             } else {
-                std::cerr << "自动保存RDB文件失败" << std::endl;
+                DKV_LOG_ERROR("自动保存RDB文件失败");
             }
             
             rdb_save_running_ = false;

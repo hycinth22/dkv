@@ -6,6 +6,7 @@
 #include <chrono>
 #include "dkv_server.hpp"
 #include "dkv_worker_pool.hpp"
+#include "dkv_logger.hpp"
 
 namespace dkv {
 
@@ -37,7 +38,7 @@ bool NetworkServer::start() {
     // 启动所有子Reactor
     for (auto& reactor : sub_reactors_) {
         if (!reactor->start()) {
-            std::cerr << "启动子Reactor失败" << std::endl;
+            DKV_LOG_ERROR("启动子Reactor失败");
             stop();
             return false;
         }
@@ -46,9 +47,8 @@ bool NetworkServer::start() {
     // 启动主事件循环线程（仅处理新连接）
     main_event_loop_thread_ = std::thread(&NetworkServer::mainEventLoop, this);
     
-    std::cout << "DKV服务器启动成功（多线程Reactor模式），监听端口: " 
-              << ntohs(server_addr_.sin_port) << std::endl;
-    std::cout << "子Reactor数量: " << sub_reactors_.size() << std::endl;
+    DKV_LOG_INFO("DKV服务器启动成功（多线程Reactor模式），监听端口: ", ntohs(server_addr_.sin_port));
+    DKV_LOG_INFO("子Reactor数量: ", sub_reactors_.size());
     
     return true;
 }
@@ -79,42 +79,42 @@ void NetworkServer::stop() {
         server_fd_ = -1;
     }
     
-    std::cout << "DKV网络服务已停止" << std::endl;
+    DKV_LOG_INFO("DKV网络服务已停止");
 }
 
 bool NetworkServer::initializeServer(int /*port*/) {
     // 创建socket
     server_fd_ = socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd_ < 0) {
-        std::cerr << "创建socket失败" << std::endl;
+        DKV_LOG_ERROR("创建socket失败");
         return false;
     }
     
     // 设置socket选项
     int opt = 1;
     if (setsockopt(server_fd_, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
-        std::cerr << "设置socket选项失败" << std::endl;
+        DKV_LOG_ERROR("设置socket选项失败");
         close(server_fd_);
         return false;
     }
     
     // 设置非阻塞模式
     if (!setNonBlocking(server_fd_)) {
-        std::cerr << "设置非阻塞模式失败" << std::endl;
+        DKV_LOG_ERROR("设置非阻塞模式失败");
         close(server_fd_);
         return false;
     }
     
     // 绑定地址
     if (bind(server_fd_, (struct sockaddr*)&server_addr_, sizeof(server_addr_)) < 0) {
-        std::cerr << "绑定地址失败" << std::endl;
+        DKV_LOG_ERROR("绑定地址失败");
         close(server_fd_);
         return false;
     }
     
     // 开始监听
     if (listen(server_fd_, 128) < 0) {
-        std::cerr << "开始监听失败" << std::endl;
+        DKV_LOG_ERROR("开始监听失败");
         close(server_fd_);
         return false;
     }
@@ -122,14 +122,14 @@ bool NetworkServer::initializeServer(int /*port*/) {
     // 创建主Reactor的epoll实例
     epoll_fd_ = epoll_create1(0);
     if (epoll_fd_ < 0) {
-        std::cerr << "创建epoll实例失败" << std::endl;
+        DKV_LOG_ERROR("创建epoll实例失败");
         close(server_fd_);
         return false;
     }
     
     // 添加服务器socket到主Reactor的epoll
     if (!addEpollEvent(server_fd_, EPOLLIN)) {
-        std::cerr << "添加服务器socket到epoll失败" << std::endl;
+        DKV_LOG_ERROR("添加服务器socket到epoll失败");
         close(epoll_fd_);
         close(server_fd_);
         return false;
@@ -149,7 +149,7 @@ void NetworkServer::mainEventLoop() {
             if (errno == EINTR) {
                 continue;
             }
-            std::cerr << "主Reactor epoll_wait失败: " << strerror(errno) << std::endl;
+            DKV_LOG_ERROR("主Reactor epoll_wait失败: ", strerror(errno));
             break;
         }
         
@@ -174,7 +174,7 @@ void NetworkServer::handleNewConnection() {
         int client_fd = accept(server_fd_, (struct sockaddr*)&client_addr, &client_len);
         if (client_fd < 0) {
             if (errno != EAGAIN && errno != EWOULDBLOCK) {
-                std::cerr << "接受连接失败: " << strerror(errno) << std::endl;
+                DKV_LOG_ERROR("接受连接失败: ", strerror(errno));
             }
             break; // 没有更多连接可接受
         }
@@ -186,9 +186,12 @@ void NetworkServer::handleNewConnection() {
         // 将客户端连接交给子Reactor处理
         sub_reactors_[reactor_index]->addClient(client_fd, client_addr);
         
-        std::cout << "新客户端连接: " << inet_ntoa(client_addr.sin_addr) 
-                  << ":" << ntohs(client_addr.sin_port) 
-                  << "，分配给子Reactor " << reactor_index << std::endl;
+        DKV_LOG_INFO("新客户端连接: ", 
+                     inet_ntoa(client_addr.sin_addr),
+                     ":",
+                     ntohs(client_addr.sin_port), 
+                     " ,分配给子Reactor ",
+                     reactor_index);
     }
 }
 

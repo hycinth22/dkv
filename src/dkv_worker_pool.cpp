@@ -2,7 +2,7 @@
 #include "dkv_core.hpp"
 #include "dkv_network.hpp"
 #include "dkv_server.hpp"
-#include <iostream>
+#include "dkv_logger.hpp"
 #include <stdexcept>
 
 namespace dkv {
@@ -14,7 +14,7 @@ WorkerThreadPool::WorkerThreadPool(DKVServer* server, size_t num_threads)
         workers_.emplace_back(&WorkerThreadPool::workerThread, this);
     }
     
-    std::cout << "工作线程池已创建，线程数: " << num_threads << std::endl;
+    DKV_LOG_INFO("工作线程池已创建，线程数: ", num_threads);
 }
 
 WorkerThreadPool::~WorkerThreadPool() {
@@ -92,7 +92,7 @@ void WorkerThreadPool::workerThread() {
                 }
             }
         } catch (const std::exception& e) {
-            std::cerr << "工作线程执行任务时出错: " << e.what() << std::endl;
+            DKV_LOG_ERROR("工作线程执行任务时出错: ", e.what());
         }
     }
 }
