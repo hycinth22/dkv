@@ -35,7 +35,7 @@ AOFPersistence::~AOFPersistence() {
 
 void AOFPersistence::setServer(DKVServer* server) {
     server_ = server;
-    DKV_LOG_INFO("Server reference set for AOF persistence");
+    DKV_LOG_DEBUG("Server reference set for AOF persistence");
 }
 
 bool AOFPersistence::initialize(const std::string& filename, FsyncPolicy fsync_policy) {

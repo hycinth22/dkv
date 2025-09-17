@@ -53,7 +53,7 @@ bool DKVServer::start() {
         if (aof_persistence_->initialize(aof_filename_, policy)) {
             // 设置AOF自动重写参数
             aof_persistence_->setAutoRewriteParams(auto_aof_rewrite_percentage_, auto_aof_rewrite_min_size_ / (1024 * 1024));
-            DKV_LOG_INFO("AOF自动重写配置: 百分比={}%, 最小大小={}MB", auto_aof_rewrite_percentage_, auto_aof_rewrite_min_size_ / (1024 * 1024));
+            DKV_LOG_INFO("AOF自动重写配置: 百分比=", auto_aof_rewrite_percentage_, "%, 最小大小=", auto_aof_rewrite_min_size_ / (1024 * 1024), "MB");
             
             // 从AOF文件加载数据
             if (aof_persistence_->loadFromFile(this)) {
@@ -250,6 +250,27 @@ void DKVServer::setAOFFilename(const std::string& filename) {
 
 void DKVServer::setAOFFsyncPolicy(const std::string& policy) {
     aof_fsync_policy_ = policy;
+}
+
+bool DKVServer::rewriteAOF() {
+    if (!enable_aof_ || !aof_persistence_) {
+        DKV_LOG_WARNING("AOF持久化未启用或AOF组件未初始化");
+        return false;
+    }
+    
+    DKV_LOG_INFO("开始执行AOF重写");
+    
+    // 生成临时文件名
+    std::string temp_filename = aof_filename_ + ".tmp";
+    
+    // 执行AOF重写
+    if (aof_persistence_->rewrite(storage_engine_.get(), temp_filename)) {
+        DKV_LOG_INFO("AOF重写成功");
+        return true;
+    } else {
+        DKV_LOG_ERROR("AOF重写失败");
+        return false;
+    }
 }
 
 bool DKVServer::initialize() {

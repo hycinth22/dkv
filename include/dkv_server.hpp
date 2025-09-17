@@ -96,6 +96,9 @@ public:
     void setAOFFilename(const std::string& filename);
     void setAOFFsyncPolicy(const std::string& policy);
     
+    // AOF重写方法
+    bool rewriteAOF();
+    
 private:
     // 初始化服务器
     bool initialize();
