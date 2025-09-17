@@ -15,7 +15,8 @@ void testRDB(dkv::TestRunner& runner) {
     runner.runTest("测试SAVE和BGSAVE命令", []() {
         // 创建服务器实例（使用非标准端口避免冲突）
         dkv::DKVServer server(6381);
-        
+        server.setAOFEnabled(false);
+
         // 设置RDB配置
         server.setRDBEnabled(true);
         server.setRDBFilename("test_dump.rdb");
@@ -106,7 +107,8 @@ void testRDB(dkv::TestRunner& runner) {
         
         // 创建新的服务器实例
         dkv::DKVServer server(6382);
-        
+        server.setAOFEnabled(false);
+
         // 设置RDB配置
         server.setRDBEnabled(true);
         server.setRDBFilename("test_dump.rdb");
@@ -166,7 +168,8 @@ void testRDB(dkv::TestRunner& runner) {
     runner.runTest("测试自动保存功能", []() {
         // 创建服务器实例
         dkv::DKVServer server(6383);
-        
+        server.setAOFEnabled(false);
+
         // 设置RDB配置，使用短间隔进行测试
         server.setRDBEnabled(true);
         server.setRDBFilename("auto_dump.rdb");

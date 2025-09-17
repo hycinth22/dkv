@@ -18,7 +18,8 @@ void testAOF(dkv::TestRunner& runner) {
 
         // 创建服务器实例（使用非标准端口避免冲突）
         dkv::DKVServer server(6391);
-        
+        server.setRDBEnabled(false);
+
         // 设置AOF配置
         server.setAOFEnabled(true);
         server.setAOFFilename("test_aof.aof");
@@ -102,7 +103,8 @@ void testAOF(dkv::TestRunner& runner) {
         
         // 创建新的服务器实例
         dkv::DKVServer server(6392);
-        
+        server.setRDBEnabled(false);
+
         // 设置AOF配置
         server.setAOFEnabled(true);
         server.setAOFFilename("test_aof.aof");
@@ -167,12 +169,14 @@ void testAOF(dkv::TestRunner& runner) {
     runner.runTest("测试不同的fsync策略", []() {
         // 测试NEVER策略
         dkv::DKVServer server_never(6393);
+        server_never.setRDBEnabled(false);
         server_never.setAOFEnabled(true);
         server_never.setAOFFilename("test_aof_never.aof");
         server_never.setAOFFsyncPolicy("never");
         
         // 测试ALWAYS策略
         dkv::DKVServer server_always(6394);
+        server_always.setRDBEnabled(false);
         server_always.setAOFEnabled(true);
         server_always.setAOFFilename("test_aof_always.aof");
         server_always.setAOFFsyncPolicy("always");
@@ -214,7 +218,8 @@ void testAOF(dkv::TestRunner& runner) {
         
         // 创建服务器实例
         dkv::DKVServer server(6395);
-        
+        server.setRDBEnabled(false);
+
         // 设置AOF配置
         server.setAOFEnabled(true);
         server.setAOFFilename("test_aof_rewrite.aof");
@@ -304,6 +309,7 @@ void testAOF(dkv::TestRunner& runner) {
         
         // 创建新的服务器实例来测试重写后的AOF文件
         dkv::DKVServer new_server(6396);
+        new_server.setRDBEnabled(false);
         new_server.setAOFEnabled(true);
         new_server.setAOFFilename("test_aof_rewrite.aof");
         

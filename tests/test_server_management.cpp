@@ -12,7 +12,9 @@ void testServerManagement(dkv::TestRunner& runner) {
     
     // 创建服务器实例（使用非标准端口避免冲突）
     dkv::DKVServer server(6380);
-    
+    server.setRDBEnabled(false);
+    server.setAOFEnabled(false);
+
     // 启动服务器
     if (!server.start()) {
         std::cerr << "服务器启动失败" << std::endl;
