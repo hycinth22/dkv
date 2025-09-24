@@ -86,6 +86,18 @@ enum class ResponseStatus {
     INVALID_COMMAND = 3
 };
 
+// 内存淘汰策略枚举
+enum class EvictionPolicy {
+    NOEVICTION = 0,           // 不移除任何键
+    VOLATILE_LRU = 1,         // 只对设置了过期时间的键使用LRU算法
+    ALLKEYS_LRU = 2,          // 对所有键使用LRU算法
+    VOLATILE_LFU = 3,         // 只对设置了过期时间的键使用LFU算法
+    ALLKEYS_LFU = 4,          // 对所有键使用LFU算法
+    VOLATILE_RANDOM = 5,      // 随机移除设置了过期时间的键
+    ALLKEYS_RANDOM = 6,       // 随机移除任何键
+    VOLATILE_TTL = 7          // 移除那些TTL值最小的键
+};
+
 // 命令结构
 struct Command {
     CommandType type;

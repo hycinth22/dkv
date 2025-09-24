@@ -61,6 +61,9 @@ std::string StorageEngine::get(const Key& key) {
     
     auto* string_item = dynamic_cast<StringItem*>(it->second.get());
     if (string_item) {
+        // 更新访问时间和频率
+        string_item->touch();
+        string_item->incrementFrequency();
         return string_item->getValue();
     }
     
@@ -84,7 +87,16 @@ bool StorageEngine::exists(const Key& key) {
     std::shared_lock<std::shared_mutex> lock(mutex_);
     
     auto it = data_.find(key);
-    return it != data_.end() && !isKeyExpired(key);
+    if (it != data_.end() && !isKeyExpired(key)) {
+        // 更新访问时间和频率
+        DataItem* item = it->second.get();
+        if (item) {
+            item->touch();
+            item->incrementFrequency();
+        }
+        return true;
+    }
+    return false;
 }
 
 bool StorageEngine::expire(const Key& key, int64_t seconds) {
@@ -342,6 +354,9 @@ std::string StorageEngine::hget(const Key& key, const Value& field) {
     
     Value value;
     if (hash_item->getField(field, value)) {
+        // 更新访问时间和频率
+        hash_item->touch();
+        hash_item->incrementFrequency();
         return value;
     }
     return "";
@@ -359,6 +374,10 @@ std::vector<std::pair<Value, Value>> StorageEngine::hgetall(const Key& key) {
     if (!hash_item) {
         return {};
     }
+    
+    // 更新访问时间和频率
+    hash_item->touch();
+    hash_item->incrementFrequency();
     
     return hash_item->getAll();
 }
@@ -416,6 +435,10 @@ std::vector<Value> StorageEngine::hkeys(const Key& key) {
         return {};
     }
     
+    // 更新访问时间和频率
+    hash_item->touch();
+    hash_item->incrementFrequency();
+    
     return hash_item->getKeys();
 }
 
@@ -431,6 +454,10 @@ std::vector<Value> StorageEngine::hvals(const Key& key) {
     if (!hash_item) {
         return {};
     }
+    
+    // 更新访问时间和频率
+    hash_item->touch();
+    hash_item->incrementFrequency();
     
     return hash_item->getValues();
 }
@@ -510,6 +537,10 @@ std::string StorageEngine::lpop(const Key& key) {
     
     Value value;
     if (list_item->lpop(value)) {
+        // 更新访问时间和频率
+        list_item->touch();
+        list_item->incrementFrequency();
+        
         // 如果列表为空，删除整个键
         if (list_item->empty()) {
             data_.erase(it);
@@ -536,6 +567,10 @@ std::string StorageEngine::rpop(const Key& key) {
     
     Value value;
     if (list_item->rpop(value)) {
+        // 更新访问时间和频率
+        list_item->touch();
+        list_item->incrementFrequency();
+        
         // 如果列表为空，删除整个键
         if (list_item->empty()) {
             data_.erase(it);
@@ -560,6 +595,10 @@ size_t StorageEngine::llen(const Key& key) {
         return 0;
     }
     
+    // 更新访问时间和频率
+    list_item->touch();
+    list_item->incrementFrequency();
+    
     return list_item->size();
 }
 
@@ -575,6 +614,10 @@ std::vector<Value> StorageEngine::lrange(const Key& key, size_t start, size_t st
     if (!list_item) {
         return {};
     }
+    
+    // 更新访问时间和频率
+    list_item->touch();
+    list_item->incrementFrequency();
     
     return list_item->lrange(start, stop);
 }
@@ -695,10 +738,14 @@ std::vector<Value> StorageEngine::smembers(const Key& key) {
         return {};
     }
     
+    // 更新访问时间和频率
+    set_item->touch();
+    set_item->incrementFrequency();
+    
     return set_item->smembers();
 }
 
-bool StorageEngine::sismember(const Key& key, const Value& member) const {
+bool StorageEngine::sismember(const Key& key, const Value& member) {
     std::shared_lock<std::shared_mutex> lock(mutex_);
     
     auto it = data_.find(key);
@@ -710,11 +757,15 @@ bool StorageEngine::sismember(const Key& key, const Value& member) const {
     if (!set_item) {
         return false;
     }
+    
+    // 更新访问时间和频率
+    set_item->touch();
+    set_item->incrementFrequency();
     
     return set_item->sismember(member);
 }
 
-size_t StorageEngine::scard(const Key& key) const {
+size_t StorageEngine::scard(const Key& key) {
     std::shared_lock<std::shared_mutex> lock(mutex_);
     
     auto it = data_.find(key);
@@ -726,6 +777,10 @@ size_t StorageEngine::scard(const Key& key) const {
     if (!set_item) {
         return 0;
     }
+    
+    // 更新访问时间和频率
+    set_item->touch();
+    set_item->incrementFrequency();
     
     return set_item->scard();
 }
@@ -817,10 +872,14 @@ bool StorageEngine::zscore(const Key& key, const Value& member, double& score) {
         return false;
     }
     
+    // 更新访问时间和频率
+    zset_item->touch();
+    zset_item->incrementFrequency();
+    
     return zset_item->zscore(member, score);
 }
 
-bool StorageEngine::zismember(const Key& key, const Value& member) const {
+bool StorageEngine::zismember(const Key& key, const Value& member) {
     std::shared_lock<std::shared_mutex> lock(mutex_);
     
     auto it = data_.find(key);
@@ -832,6 +891,10 @@ bool StorageEngine::zismember(const Key& key, const Value& member) const {
     if (!zset_item) {
         return false;
     }
+    
+    // 更新访问时间和频率
+    zset_item->touch();
+    zset_item->incrementFrequency();
     
     return zset_item->zismember(member);
 }
@@ -849,6 +912,10 @@ bool StorageEngine::zrank(const Key& key, const Value& member, size_t& rank) {
         return false;
     }
     
+    // 更新访问时间和频率
+    zset_item->touch();
+    zset_item->incrementFrequency();
+    
     return zset_item->zrank(member, rank);
 }
 
@@ -865,6 +932,10 @@ bool StorageEngine::zrevrank(const Key& key, const Value& member, size_t& rank) 
         return false;
     }
     
+    // 更新访问时间和频率
+    zset_item->touch();
+    zset_item->incrementFrequency();
+    
     return zset_item->zrevrank(member, rank);
 }
 
@@ -876,10 +947,14 @@ std::vector<std::pair<Value, double>> StorageEngine::zrange(const Key& key, size
         return {};
     }
     
-    ZSetItem* zset_item = dynamic_cast<ZSetItem*>(it->second.get());
+    auto* zset_item = dynamic_cast<ZSetItem*>(it->second.get());
     if (!zset_item) {
         return {};
     }
+    
+    // 更新访问时间和频率
+    zset_item->touch();
+    zset_item->incrementFrequency();
     
     return zset_item->zrange(start, stop);
 }
@@ -892,10 +967,14 @@ std::vector<std::pair<Value, double>> StorageEngine::zrevrange(const Key& key, s
         return {};
     }
     
-    ZSetItem* zset_item = dynamic_cast<ZSetItem*>(it->second.get());
+    auto* zset_item = dynamic_cast<ZSetItem*>(it->second.get());
     if (!zset_item) {
         return {};
     }
+    
+    // 更新访问时间和频率
+    zset_item->touch();
+    zset_item->incrementFrequency();
     
     return zset_item->zrevrange(start, stop);
 }
@@ -908,10 +987,14 @@ std::vector<std::pair<Value, double>> StorageEngine::zrangebyscore(const Key& ke
         return {};
     }
     
-    ZSetItem* zset_item = dynamic_cast<ZSetItem*>(it->second.get());
+    auto* zset_item = dynamic_cast<ZSetItem*>(it->second.get());
     if (!zset_item) {
         return {};
     }
+    
+    // 更新访问时间和频率
+    zset_item->touch();
+    zset_item->incrementFrequency();
     
     return zset_item->zrangebyscore(min, max);
 }
@@ -924,10 +1007,14 @@ std::vector<std::pair<Value, double>> StorageEngine::zrevrangebyscore(const Key&
         return {};
     }
     
-    ZSetItem* zset_item = dynamic_cast<ZSetItem*>(it->second.get());
+    auto* zset_item = dynamic_cast<ZSetItem*>(it->second.get());
     if (!zset_item) {
         return {};
     }
+    
+    // 更新访问时间和频率
+    zset_item->touch();
+    zset_item->incrementFrequency();
     
     return zset_item->zrevrangebyscore(max, min);
 }
@@ -948,7 +1035,7 @@ size_t StorageEngine::zcount(const Key& key, double min, double max) {
     return zset_item->zcount(min, max);
 }
 
-size_t StorageEngine::zcard(const Key& key) const {
+size_t StorageEngine::zcard(const Key& key) {
     std::shared_lock<std::shared_mutex> lock(mutex_);
     
     auto it = data_.find(key);
@@ -984,6 +1071,10 @@ bool StorageEngine::setBit(const Key& key, size_t offset, bool value) {
         }
     }
     
+    // 更新访问时间和频率
+    bitmap_item->touch();
+    bitmap_item->incrementFrequency();
+    
     return bitmap_item->setBit(offset, value);
 }
 
@@ -999,6 +1090,10 @@ bool StorageEngine::getBit(const Key& key, size_t offset) {
     if (!bitmap_item) {
         return false;
     }
+    
+    // 更新访问时间和频率
+    bitmap_item->touch();
+    bitmap_item->incrementFrequency();
     
     return bitmap_item->getBit(offset);
 }
@@ -1016,6 +1111,10 @@ size_t StorageEngine::bitCount(const Key& key) {
         return 0;
     }
     
+    // 更新访问时间和频率
+    bitmap_item->touch();
+    bitmap_item->incrementFrequency();
+    
     return bitmap_item->bitCount();
 }
 
@@ -1031,6 +1130,10 @@ size_t StorageEngine::bitCount(const Key& key, size_t start, size_t end) {
     if (!bitmap_item) {
         return 0;
     }
+    
+    // 更新访问时间和频率
+    bitmap_item->touch();
+    bitmap_item->incrementFrequency();
     
     return bitmap_item->bitCount(start, end);
 }
@@ -1101,7 +1204,7 @@ bool StorageEngine::pfadd(const Key& key, const std::vector<Value>& elements) {
     return modified;
 }
 
-uint64_t StorageEngine::pfcount(const Key& key) const {
+uint64_t StorageEngine::pfcount(const Key& key) {
     std::shared_lock<std::shared_mutex> lock(mutex_);
     
     auto it = data_.find(key);
@@ -1113,6 +1216,10 @@ uint64_t StorageEngine::pfcount(const Key& key) const {
     if (!hll_item) {
         return 0;
     }
+    
+    // 更新访问时间和频率
+    hll_item->touch();
+    hll_item->incrementFrequency();
     
     return hll_item->count();
 }
@@ -1156,6 +1263,76 @@ std::unique_ptr<DataItem> StorageEngine::createHyperLogLogItem() {
 
 std::unique_ptr<DataItem> StorageEngine::createHyperLogLogItem(Timestamp expire_time) {
     return std::unique_ptr<DataItem>(dkv::createHyperLogLogItem(expire_time));
+}
+
+// 淘汰策略相关方法实现
+std::vector<Key> StorageEngine::getAllKeys() const {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    std::vector<Key> result;
+    result.reserve(data_.size());
+    
+    for (const auto& pair : data_) {
+        result.push_back(pair.first);
+    }
+    
+    return result;
+}
+
+bool StorageEngine::hasExpiration(const Key& key) const {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    
+    auto it = data_.find(key);
+    if (it == data_.end()) {
+        return false;
+    }
+    
+    return it->second->hasExpiration();
+}
+
+Timestamp StorageEngine::getLastAccessed(const Key& key) const {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    
+    auto it = data_.find(key);
+    if (it == data_.end()) {
+        return Timestamp::min();
+    }
+    
+    return it->second->getLastAccessed();
+}
+
+int StorageEngine::getAccessFrequency(const Key& key) const {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    
+    auto it = data_.find(key);
+    if (it == data_.end()) {
+        return 0;
+    }
+    
+    return it->second->getAccessFrequency();
+}
+
+Timestamp StorageEngine::getExpiration(const Key& key) const {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    
+    auto it = data_.find(key);
+    if (it == data_.end() || !it->second->hasExpiration()) {
+        return Timestamp::max();
+    }
+    
+    return it->second->getExpiration();
+}
+
+size_t StorageEngine::getKeySize(const Key& key) const {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    
+    auto it = data_.find(key);
+    if (it == data_.end()) {
+        return 0;
+    }
+    
+    // 估算键的大小，包括键名和值
+    size_t size = key.size() + it->second->serialize().size();
+    return size;
 }
 
 } // namespace dkv

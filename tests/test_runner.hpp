@@ -56,6 +56,58 @@ namespace dkv {
     } \
 } while(0)
 
+#define ASSERT_GT(actual, expected) do { \
+    auto _actual = (actual); \
+    auto _expected = (expected); \
+    if (!(_actual > _expected)) { \
+        std::cerr << "断言失败: " << #actual << " > " << #expected << "\n" \
+                  << "  实际值: " << _actual << "\n" \
+                  << "  期望值: 大于 " << _expected << "\n" \
+                  << "  文件: " << __FILE__ << "\n" \
+                  << "  行号: " << __LINE__ << std::endl; \
+        assert(false); \
+    } \
+} while(0)
+
+#define ASSERT_GE(actual, expected) do { \
+    auto _actual = (actual); \
+    auto _expected = (expected); \
+    if (!(_actual >= _expected)) { \
+        std::cerr << "断言失败: " << #actual << " >= " << #expected << "\n" \
+                  << "  实际值: " << _actual << "\n" \
+                  << "  期望值: 大于等于 " << _expected << "\n" \
+                  << "  文件: " << __FILE__ << "\n" \
+                  << "  行号: " << __LINE__ << std::endl; \
+        assert(false); \
+    } \
+} while(0)
+
+#define ASSERT_LT(actual, expected) do { \
+    auto _actual = (actual); \
+    auto _expected = (expected); \
+    if (!(_actual < _expected)) { \
+        std::cerr << "断言失败: " << #actual << " < " << #expected << "\n" \
+                  << "  实际值: " << _actual << "\n" \
+                  << "  期望值: 小于 " << _expected << "\n" \
+                  << "  文件: " << __FILE__ << "\n" \
+                  << "  行号: " << __LINE__ << std::endl; \
+        assert(false); \
+    } \
+} while(0)
+
+#define ASSERT_LE(actual, expected) do { \
+    auto _actual = (actual); \
+    auto _expected = (expected); \
+    if (!(_actual <= _expected)) { \
+        std::cerr << "断言失败: " << #actual << " <= " << #expected << "\n" \
+                  << "  实际值: " << _actual << "\n" \
+                  << "  期望值: 小于等于 " << _expected << "\n" \
+                  << "  文件: " << __FILE__ << "\n" \
+                  << "  行号: " << __LINE__ << std::endl; \
+        assert(false); \
+    } \
+} while(0)
+
 // 用于字符串包含的断言宏
 #define ASSERT_CONTAINS(str, substr) do { \
     const auto& _str = (str); \

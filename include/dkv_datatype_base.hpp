@@ -35,6 +35,16 @@ public:
     virtual void setExpiration(Timestamp expire_time) = 0;
     virtual Timestamp getExpiration() const = 0;
     virtual bool hasExpiration() const = 0;
+    
+    // 用于淘汰策略的方法
+    void touch();
+    Timestamp getLastAccessed() const;
+    void incrementFrequency();
+    uint64_t getAccessFrequency() const;
+    
+protected:
+    Timestamp last_accessed_; // 最后访问时间
+    std::atomic<uint64_t> access_frequency_ = {0}; // 访问频率
 };
 
 // 前向声明

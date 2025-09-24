@@ -93,14 +93,14 @@ public:
     size_t sadd(const Key& key, const std::vector<Value>& members);
     size_t srem(const Key& key, const std::vector<Value>& members);
     std::vector<Value> smembers(const Key& key);
-    bool sismember(const Key& key, const Value& member) const;
-    size_t scard(const Key& key) const;
+    bool sismember(const Key& key, const Value& member);
+    size_t scard(const Key& key);
     
     // 有序集合操作
     size_t zadd(const Key& key, const std::vector<std::pair<Value, double>>& members_with_scores);
     size_t zrem(const Key& key, const std::vector<Value>& members);
     bool zscore(const Key& key, const Value& member, double& score);
-    bool zismember(const Key& key, const Value& member) const;
+    bool zismember(const Key& key, const Value& member);
     bool zrank(const Key& key, const Value& member, size_t& rank);
     bool zrevrank(const Key& key, const Value& member, size_t& rank);
     std::vector<std::pair<Value, double>> zrange(const Key& key, size_t start, size_t stop);
@@ -108,7 +108,7 @@ public:
     std::vector<std::pair<Value, double>> zrangebyscore(const Key& key, double min, double max);
     std::vector<std::pair<Value, double>> zrevrangebyscore(const Key& key, double max, double min);
     size_t zcount(const Key& key, double min, double max);
-    size_t zcard(const Key& key) const;
+    size_t zcard(const Key& key);
     
     // 位图操作
     bool setBit(const Key& key, size_t offset, bool value);
@@ -119,7 +119,7 @@ public:
     
     // HyperLogLog操作
     bool pfadd(const Key& key, const std::vector<Value>& elements);
-    uint64_t pfcount(const Key& key) const;
+    uint64_t pfcount(const Key& key);
     bool pfmerge(const Key& destkey, const std::vector<Key>& sourcekeys);
     
     // 获取数据项
@@ -127,6 +127,14 @@ public:
     
     // 设置数据项（AOF重写恢复专用）
     void setDataItem(const Key& key, std::unique_ptr<DataItem> item);
+    
+    // 淘汰策略相关方法
+    std::vector<Key> getAllKeys() const; // 获取所有键
+    bool hasExpiration(const Key& key) const; // 检查键是否有过期时间
+    Timestamp getLastAccessed(const Key& key) const; // 获取键的最后访问时间
+    int getAccessFrequency(const Key& key) const; // 获取键的访问频率
+    Timestamp getExpiration(const Key& key) const; // 获取键的过期时间
+    size_t getKeySize(const Key& key) const; // 获取键的大小
     
 private:
     // 内部辅助方法

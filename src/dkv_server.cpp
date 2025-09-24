@@ -222,6 +222,131 @@ size_t DKVServer::getMaxMemory() const {
     return max_memory_;
 }
 
+void DKVServer::setEvictionPolicy(EvictionPolicy policy) {
+    eviction_policy_ = policy;
+}
+
+EvictionPolicy DKVServer::getEvictionPolicy() const {
+    return eviction_policy_;
+}
+
+void DKVServer::evictKeys() {
+    if (!storage_engine_) {
+        DKV_LOG_ERROR("存储引擎未初始化，无法执行淘汰策略");
+        return;
+    }
+    
+    // 获取存储引擎的所有键
+    std::vector<Key> all_keys = storage_engine_->getAllKeys();
+    
+    // 根据不同的淘汰策略选择要淘汰的键
+    std::vector<Key> keys_to_evict;
+    
+    // 目标内存使用量（低于最大内存限制的一定比例）
+    size_t target_usage = max_memory_ * 0.8; // 目标内存使用量为最大内存的80%
+    size_t current_usage = getMemoryUsage();
+    
+    // 收集符合条件的键
+    std::vector<Key> eligible_keys;
+    for (const auto& key : all_keys) {
+        // 检查键是否满足淘汰条件
+        bool eligible = false;
+        
+        // 根据策略类型过滤键
+        switch (eviction_policy_) {
+            case EvictionPolicy::VOLATILE_LRU:
+            case EvictionPolicy::VOLATILE_LFU:
+            case EvictionPolicy::VOLATILE_RANDOM:
+            case EvictionPolicy::VOLATILE_TTL:
+                // 只考虑有过期时间的键
+                eligible = storage_engine_->hasExpiration(key);
+                break;
+            case EvictionPolicy::ALLKEYS_LRU:
+            case EvictionPolicy::ALLKEYS_LFU:
+            case EvictionPolicy::ALLKEYS_RANDOM:
+                // 考虑所有键
+                eligible = true;
+                break;
+            default:
+                // NOEVICTION等其他策略不执行淘汰
+                return;
+        }
+        
+        if (eligible) {
+            eligible_keys.push_back(key);
+        }
+    }
+    
+    if (eligible_keys.empty()) {
+        DKV_LOG_WARNING("没有符合条件的键可以淘汰");
+        return;
+    }
+    
+    // 根据策略选择要淘汰的键
+    switch (eviction_policy_) {
+        case EvictionPolicy::VOLATILE_LRU:
+        case EvictionPolicy::ALLKEYS_LRU:
+            // LRU策略：淘汰最后访问时间最早的键
+            {
+                std::sort(eligible_keys.begin(), eligible_keys.end(), [this](const Key& a, const Key& b) {
+                    return storage_engine_->getLastAccessed(a) < storage_engine_->getLastAccessed(b);
+                });
+                break;
+            }
+        case EvictionPolicy::VOLATILE_LFU:
+        case EvictionPolicy::ALLKEYS_LFU:
+            // LFU策略：淘汰访问频率最低的键
+            {
+                std::sort(eligible_keys.begin(), eligible_keys.end(), [this](const Key& a, const Key& b) {
+                    return storage_engine_->getAccessFrequency(a) < storage_engine_->getAccessFrequency(b);
+                });
+                break;
+            }
+        case EvictionPolicy::VOLATILE_TTL:
+            // TTL策略：淘汰TTL最小的键
+            {
+                std::sort(eligible_keys.begin(), eligible_keys.end(), [this](const Key& a, const Key& b) {
+                    return storage_engine_->getExpiration(a) < storage_engine_->getExpiration(b);
+                });
+                break;
+            }
+        case EvictionPolicy::VOLATILE_RANDOM:
+        case EvictionPolicy::ALLKEYS_RANDOM:
+            // 随机策略：打乱键的顺序
+            {
+                std::random_shuffle(eligible_keys.begin(), eligible_keys.end());
+                break;
+            }
+        default:
+            break;
+    }
+    
+    // 开始淘汰键，直到达到目标内存使用量或没有更多键可淘汰
+    size_t evicted_count = 0;
+    for (const auto& key : eligible_keys) {
+        // 检查是否已经达到目标内存使用量
+        if (current_usage <= target_usage) {
+            break;
+        }
+        
+        // 删除键
+        size_t key_size = storage_engine_->getKeySize(key);
+        if (storage_engine_->del(key)) {
+            DKV_LOG_INFO("淘汰键: ", key.c_str(), " 大小: ", key_size);
+            current_usage -= key_size;
+            evicted_count++;
+            
+            // 如果启用了AOF持久化，记录DEL命令
+            if (enable_aof_ && aof_persistence_) {
+                Command del_cmd(CommandType::DEL, {std::string(key)});
+                aof_persistence_->appendCommand(del_cmd);
+            }
+        }
+    }
+    
+    DKV_LOG_INFO("执行淘汰策略完成，共淘汰了 ", evicted_count, " 个键");
+}
+
 // RDB持久化配置方法实现
 void DKVServer::setRDBEnabled(bool enabled) {
     enable_rdb_ = enabled;
@@ -317,9 +442,26 @@ Response DKVServer::executeCommand(const Command& command) {
     // 如果是可能分配内存的命令，且设置了最大内存限制，则检查内存使用情况
     if (mayAllocateMemory && max_memory_ > 0) {
         size_t currentUsage = getMemoryUsage();
+        
+        // 如果内存使用达到上限，尝试执行淘汰策略
         if (currentUsage >= max_memory_) {
-            DKV_LOG_WARNING("内存使用已达到上限，拒绝执行命令");
-            return Response(ResponseStatus::ERROR, "OOM command not allowed when used memory > 'maxmemory'");
+            if (eviction_policy_ != EvictionPolicy::NOEVICTION) {
+                // 尝试淘汰一些键
+                DKV_LOG_INFO("内存使用已达到上限，尝试执行淘汰策略");
+                evictKeys();
+                
+                // 重新检查内存使用情况
+                currentUsage = getMemoryUsage();
+                
+                // 如果淘汰后内存使用仍然达到上限，拒绝执行命令
+                if (currentUsage >= max_memory_) {
+                    DKV_LOG_WARNING("执行淘汰策略后内存使用仍达到上限，拒绝执行命令");
+                    return Response(ResponseStatus::ERROR, "OOM command not allowed when used memory > 'maxmemory'");
+                }
+            } else {
+                DKV_LOG_WARNING("内存使用已达到上限，拒绝执行命令");
+                return Response(ResponseStatus::ERROR, "OOM command not allowed when used memory > 'maxmemory'");
+            }
         }
     }
     

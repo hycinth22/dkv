@@ -48,6 +48,9 @@ private:
     int auto_aof_rewrite_percentage_; // AOF自动重写百分比
     int auto_aof_rewrite_min_size_; // AOF自动重写最小大小
     std::unique_ptr<AOFPersistence> aof_persistence_; // AOF持久化管理器
+    
+    // 内存淘汰策略
+    EvictionPolicy eviction_policy_ = EvictionPolicy::NOEVICTION; // 默认使用noeviction策略
 
 public:
     DKVServer(int port = 6379, size_t num_sub_reactors = 4, size_t num_workers = 8);
@@ -79,6 +82,15 @@ public:
     
     // 获取最大内存限制
     size_t getMaxMemory() const;
+    
+    // 设置内存淘汰策略
+    void setEvictionPolicy(EvictionPolicy policy);
+    
+    // 获取内存淘汰策略
+    EvictionPolicy getEvictionPolicy() const;
+    
+    // 根据淘汰策略淘汰键
+    void evictKeys();
 
     // 获取存储引擎（用于AOF重写）
     StorageEngine* getStorageEngine() const {
