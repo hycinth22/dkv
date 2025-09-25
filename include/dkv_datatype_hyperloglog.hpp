@@ -39,10 +39,6 @@ public:
     DataType getType() const override;
     std::string serialize() const override;
     void deserialize(const std::string& data) override;
-    bool isExpired() const override;
-    void setExpiration(Timestamp expire_time) override;
-    Timestamp getExpiration() const override;
-    bool hasExpiration() const override;
 
     // HyperLogLog特有操作
     // 添加元素到HyperLogLog

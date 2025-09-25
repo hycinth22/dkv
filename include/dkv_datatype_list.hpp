@@ -23,10 +23,6 @@ public:
     DataType getType() const override;
     std::string serialize() const override;
     void deserialize(const std::string& data) override;
-    bool isExpired() const override;
-    void setExpiration(Timestamp expire_time) override;
-    Timestamp getExpiration() const override;
-    bool hasExpiration() const override;
     
     // 列表特有操作
     // 在列表左侧插入元素

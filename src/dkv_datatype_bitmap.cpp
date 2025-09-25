@@ -7,11 +7,11 @@ namespace dkv {
 
 // BitmapItem 实现
 BitmapItem::BitmapItem() 
-    : expire_time_(), has_expiration_(false) {
+    : DataItem() {
 }
 
 BitmapItem::BitmapItem(Timestamp expire_time)
-    : expire_time_(expire_time), has_expiration_(true) {
+    : DataItem(expire_time) {
 }
 
 DataType BitmapItem::getType() const {
@@ -28,8 +28,8 @@ std::string BitmapItem::serialize() const {
     }
     
     // 序列化过期时间
-    if (has_expiration_) {
-        auto duration = expire_time_.time_since_epoch();
+    if (hasExpiration()) {
+        auto duration = getExpiration().time_since_epoch();
         auto seconds = std::chrono::duration_cast<std::chrono::seconds>(duration).count();
         oss << ":" << seconds;
     }
@@ -62,31 +62,9 @@ void BitmapItem::deserialize(const std::string& data) {
         if (std::getline(iss, expire_str)) {
             int64_t seconds = std::stoll(expire_str);
             expire_time_ = Timestamp(std::chrono::seconds(seconds));
-            has_expiration_ = true;
-        } else {
-            has_expiration_ = false;
+            setExpiration(expire_time_);
         }
     }
-}
-
-bool BitmapItem::isExpired() const {
-    if (!has_expiration_) {
-        return false;
-    }
-    return Utils::getCurrentTime() > expire_time_;
-}
-
-void BitmapItem::setExpiration(Timestamp expire_time) {
-    expire_time_ = expire_time;
-    has_expiration_ = true;
-}
-
-Timestamp BitmapItem::getExpiration() const {
-    return expire_time_;
-}
-
-bool BitmapItem::hasExpiration() const {
-    return has_expiration_;
 }
 
 bool BitmapItem::setBit(uint64_t offset, bool value) {

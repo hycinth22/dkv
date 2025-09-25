@@ -4,10 +4,10 @@
 
 namespace dkv {
 
-SetItem::SetItem() : has_expiration_(false) {
+SetItem::SetItem() : DataItem() {
 }
 
-SetItem::SetItem(Timestamp expire_time) : expire_time_(expire_time), has_expiration_(true) {
+SetItem::SetItem(Timestamp expire_time) : DataItem(expire_time) {
 }
 
 DataType SetItem::getType() const {
@@ -73,26 +73,6 @@ void SetItem::deserialize(const std::string& data) {
         
         elements_.insert(element);
     }
-}
-
-bool SetItem::isExpired() const {
-    if (!has_expiration_) {
-        return false;
-    }
-    return std::chrono::system_clock::now() > expire_time_;
-}
-
-void SetItem::setExpiration(Timestamp expire_time) {
-    expire_time_ = expire_time;
-    has_expiration_ = true;
-}
-
-Timestamp SetItem::getExpiration() const {
-    return expire_time_;
-}
-
-bool SetItem::hasExpiration() const {
-    return has_expiration_;
 }
 
 bool SetItem::sadd(const Value& member) {

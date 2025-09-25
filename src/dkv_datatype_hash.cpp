@@ -8,11 +8,11 @@ namespace dkv {
 
 // HashItem 实现
 HashItem::HashItem() 
-    : expire_time_(), has_expiration_(false) {
+    : DataItem() {
 }
 
 HashItem::HashItem(Timestamp expire_time)
-    : expire_time_(expire_time), has_expiration_(true) {
+    : DataItem(expire_time) {
 }
 
 DataType HashItem::getType() const {
@@ -69,26 +69,6 @@ void HashItem::deserialize(const std::string& data) {
             }
         }
     }
-}
-
-bool HashItem::isExpired() const {
-    if (!has_expiration_) {
-        return false;
-    }
-    return Utils::getCurrentTime() > expire_time_;
-}
-
-void HashItem::setExpiration(Timestamp expire_time) {
-    expire_time_ = expire_time;
-    has_expiration_ = true;
-}
-
-Timestamp HashItem::getExpiration() const {
-    return expire_time_;
-}
-
-bool HashItem::hasExpiration() const {
-    return has_expiration_;
 }
 
 bool HashItem::setField(const Value& field, const Value& value) {

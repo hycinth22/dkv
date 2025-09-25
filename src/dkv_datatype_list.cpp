@@ -7,11 +7,11 @@ namespace dkv {
 
 // ListItem 实现
 ListItem::ListItem() 
-    : expire_time_(), has_expiration_(false) {
+    : DataItem() {
 }
 
 ListItem::ListItem(Timestamp expire_time)
-    : expire_time_(expire_time), has_expiration_(true) {
+    : DataItem(expire_time) {
 }
 
 DataType ListItem::getType() const {
@@ -65,26 +65,6 @@ void ListItem::deserialize(const std::string& data) {
             }
         }
     }
-}
-
-bool ListItem::isExpired() const {
-    if (!has_expiration_) {
-        return false;
-    }
-    return Utils::getCurrentTime() > expire_time_;
-}
-
-void ListItem::setExpiration(Timestamp expire_time) {
-    expire_time_ = expire_time;
-    has_expiration_ = true;
-}
-
-Timestamp ListItem::getExpiration() const {
-    return expire_time_;
-}
-
-bool ListItem::hasExpiration() const {
-    return has_expiration_;
 }
 
 // 列表特有操作实现

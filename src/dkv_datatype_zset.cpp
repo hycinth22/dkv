@@ -6,10 +6,10 @@
 
 namespace dkv {
 
-ZSetItem::ZSetItem() : has_expiration_(false) {
+ZSetItem::ZSetItem() : DataItem() {
 }
 
-ZSetItem::ZSetItem(Timestamp expire_time) : expire_time_(expire_time), has_expiration_(true) {
+ZSetItem::ZSetItem(Timestamp expire_time) : DataItem(expire_time) {
 }
 
 DataType ZSetItem::getType() const {
@@ -82,26 +82,6 @@ void ZSetItem::deserialize(const std::string& data) {
         // 添加到数据结构中
         zadd(element, score);
     }
-}
-
-bool ZSetItem::isExpired() const {
-    if (!has_expiration_) {
-        return false;
-    }
-    return std::chrono::system_clock::now() > expire_time_;
-}
-
-void ZSetItem::setExpiration(Timestamp expire_time) {
-    expire_time_ = expire_time;
-    has_expiration_ = true;
-}
-
-Timestamp ZSetItem::getExpiration() const {
-    return expire_time_;
-}
-
-bool ZSetItem::hasExpiration() const {
-    return has_expiration_;
 }
 
 bool ZSetItem::zadd(const Value& member, double score) {

@@ -96,12 +96,12 @@ static uint64_t murmurHash3(const void* key, int len, uint32_t seed) {
 // HyperLogLogItem实现
 HyperLogLogItem::HyperLogLogItem() 
     : registers_(kRegisterCount, 0), cardinality_(0), cache_valid_(false),
-      expire_time_(), has_expiration_(false) {
+      DataItem() {
 }
 
 HyperLogLogItem::HyperLogLogItem(Timestamp expire_time)
     : registers_(kRegisterCount, 0), cardinality_(0), cache_valid_(false),
-      expire_time_(expire_time), has_expiration_(true) {
+      DataItem(expire_time) {
 }
 
 DataType HyperLogLogItem::getType() const {
@@ -159,28 +159,6 @@ void HyperLogLogItem::deserialize(const std::string& data) {
         // 重置缓存
         cache_valid_ = false;
     }
-}
-
-bool HyperLogLogItem::isExpired() const {
-    if (!has_expiration_) {
-        return false;
-    }
-    
-    auto now = std::chrono::system_clock::now();
-    return now > expire_time_;
-}
-
-void HyperLogLogItem::setExpiration(Timestamp expire_time) {
-    expire_time_ = expire_time;
-    has_expiration_ = true;
-}
-
-Timestamp HyperLogLogItem::getExpiration() const {
-    return expire_time_;
-}
-
-bool HyperLogLogItem::hasExpiration() const {
-    return has_expiration_;
 }
 
 uint64_t HyperLogLogItem::hash(const Value& value) const {

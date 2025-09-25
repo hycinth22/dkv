@@ -10,8 +10,6 @@ namespace dkv {
 class BitmapItem : public DataItem {
 private:
     std::vector<uint8_t> bits_; // 位图数据，使用uint8_t数组存储
-    Timestamp expire_time_;
-    bool has_expiration_;
 
 public:
     BitmapItem();
@@ -21,10 +19,6 @@ public:
     DataType getType() const override;
     std::string serialize() const override;
     void deserialize(const std::string& data) override;
-    bool isExpired() const override;
-    void setExpiration(Timestamp expire_time) override;
-    Timestamp getExpiration() const override;
-    bool hasExpiration() const;
 
     // Bitmap特有操作
     // 设置指定位的值

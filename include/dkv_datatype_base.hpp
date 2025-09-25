@@ -31,10 +31,16 @@ public:
     virtual DataType getType() const = 0;
     virtual std::string serialize() const = 0;
     virtual void deserialize(const std::string& data) = 0;
-    virtual bool isExpired() const = 0;
-    virtual void setExpiration(Timestamp expire_time) = 0;
-    virtual Timestamp getExpiration() const = 0;
-    virtual bool hasExpiration() const = 0;
+
+    // 构造函数
+    DataItem();
+    DataItem(Timestamp expire_time);
+
+    // TTL方法
+    bool isExpired() const;
+    void setExpiration(Timestamp expire_time);
+    Timestamp getExpiration() const;
+    bool hasExpiration() const;
     
     // 用于淘汰策略的方法
     void touch();
@@ -43,7 +49,11 @@ public:
     uint64_t getAccessFrequency() const;
     
 protected:
-    Timestamp last_accessed_; // 最后访问时间
+    // TTL
+    std::atomic<Timestamp> expire_time_;
+
+    // 淘汰策略
+    std::atomic<Timestamp> last_accessed_; // 最后访问时间
     std::atomic<uint64_t> access_frequency_ = {0}; // 访问频率
 };
 

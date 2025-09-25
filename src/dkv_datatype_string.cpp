@@ -8,11 +8,11 @@ namespace dkv {
 
 // StringItem 实现
 StringItem::StringItem(const Value& value) 
-    : value_(value), expire_time_(), has_expiration_(false) {
+    : value_(value), DataItem() {
 }
 
 StringItem::StringItem(const Value& value, Timestamp expire_time)
-    : value_(value), expire_time_(expire_time), has_expiration_(true) {
+    : value_(value), DataItem(expire_time) {
 }
 
 DataType StringItem::getType() const {
@@ -53,32 +53,12 @@ void StringItem::deserialize(const std::string& data) {
     }
 }
 
-bool StringItem::isExpired() const {
-    if (!has_expiration_) {
-        return false;
-    }
-    return Utils::getCurrentTime() > expire_time_;
-}
-
-void StringItem::setExpiration(Timestamp expire_time) {
-    expire_time_ = expire_time;
-    has_expiration_ = true;
-}
-
-Timestamp StringItem::getExpiration() const {
-    return expire_time_;
-}
-
 const Value& StringItem::getValue() const {
     return value_;
 }
 
 void StringItem::setValue(const Value& value) {
     value_ = value;
-}
-
-bool StringItem::hasExpiration() const {
-    return has_expiration_;
 }
 
 } // namespace dkv
