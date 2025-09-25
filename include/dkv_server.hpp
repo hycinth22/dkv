@@ -4,6 +4,7 @@
 #include "dkv_storage.hpp"
 #include "dkv_network.hpp"
 #include "dkv_aof.hpp"
+#include "dkv_command_handler.hpp"
 #include <memory>
 #include <thread>
 #include <atomic>
@@ -16,6 +17,7 @@ private:
     std::unique_ptr<StorageEngine> storage_engine_;
     std::unique_ptr<NetworkServer> network_server_;
     std::unique_ptr<WorkerThreadPool> worker_pool_;
+    std::unique_ptr<CommandHandler> command_handler_;
     std::atomic<bool> running_;
     
     // 清理线程
