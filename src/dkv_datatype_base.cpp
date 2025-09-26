@@ -1,5 +1,6 @@
 #include "dkv_datatype_base.hpp"
 #include "dkv_utils.hpp"
+#include <shared_mutex>
 
 namespace dkv {
 
@@ -36,5 +37,19 @@ void DataItem::touch() { last_accessed_ = Utils::getCurrentTime(); }
 Timestamp DataItem::getLastAccessed() const { return last_accessed_; }
 void DataItem::incrementFrequency() { access_frequency_++; }
 uint64_t DataItem::getAccessFrequency() const { return access_frequency_; }
+
+
+// 锁操作方法实现
+std::unique_lock<std::shared_mutex> DataItem::lock() {
+    return std::unique_lock<std::shared_mutex>(item_mutex_);
+}
+
+std::shared_lock<std::shared_mutex> DataItem::rlock() {
+    return std::shared_lock<std::shared_mutex>(item_mutex_);
+}
+
+std::shared_mutex& DataItem::getMutex() {
+    return item_mutex_;
+}
 
 } // namespace dkv

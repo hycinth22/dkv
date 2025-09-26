@@ -3,16 +3,37 @@
 #include "dkv_memory_allocator.hpp"
 #include <algorithm>
 #include <mutex>
-
+#include <cassert>
 namespace dkv {
+
+// 锁操作方法
+std::unique_lock<std::shared_mutex> StorageEngine::wlock() const{
+    return std::unique_lock<std::shared_mutex>(mutex_);
+}
+
+std::shared_lock<std::shared_mutex> StorageEngine::rlock() const {
+    return std::shared_lock<std::shared_mutex>(mutex_);
+}
+
+std::shared_mutex& StorageEngine::getMutex() const {
+    return mutex_;
+}
+
+std::unique_lock<std::shared_mutex> StorageEngine::wlock_deferred() const {
+    return std::unique_lock<std::shared_mutex>(mutex_, std::defer_lock);
+}
+
+std::shared_lock<std::shared_mutex> StorageEngine::rlock_deferred() const {
+    return std::shared_lock<std::shared_mutex>(mutex_, std::defer_lock);
+}
 
 // StorageEngine 实现
 bool StorageEngine::set(const Key& key, const Value& value) {
-    std::unique_lock<std::shared_mutex> lock(mutex_);
-    
+    auto readlock = rlock();
     // 检查键是否已存在且未过期
     auto it = data_.find(key);
-    if (it != data_.end() && !isKeyExpired(key)) {
+    if (it != data_.end() && !it->second->isExpired()) {
+        auto keylock = it->second->lock();
         // 更新现有值
         auto* string_item = dynamic_cast<StringItem*>(it->second.get());
         if (string_item) {
@@ -20,7 +41,8 @@ bool StorageEngine::set(const Key& key, const Value& value) {
             return true;
         }
     }
-    
+    readlock.unlock();
+    auto writelock = wlock();
     // 创建新的字符串项
     data_[key] = createStringItem(value);
     total_keys_++;
@@ -28,14 +50,15 @@ bool StorageEngine::set(const Key& key, const Value& value) {
 }
 
 bool StorageEngine::set(const Key& key, const Value& value, int64_t expire_seconds) {
-    std::unique_lock<std::shared_mutex> lock(mutex_);
+    auto readlock = rlock();
     
     // 计算过期时间
     auto expire_time = Utils::getCurrentTime() + std::chrono::seconds(expire_seconds);
     
     // 检查键是否已存在且未过期
     auto it = data_.find(key);
-    if (it != data_.end() && !isKeyExpired(key)) {
+    if (it != data_.end() && !it->second->isExpired()) {
+        auto keylock = it->second->lock();
         // 更新现有值
         auto* string_item = dynamic_cast<StringItem*>(it->second.get());
         if (string_item) {
@@ -46,18 +69,21 @@ bool StorageEngine::set(const Key& key, const Value& value, int64_t expire_secon
     }
     
     // 创建新的字符串项
+    readlock.unlock();
+    auto writelock = wlock();
     data_[key] = createStringItem(value, expire_time);
     total_keys_++;
     return true;
 }
 
 std::string StorageEngine::get(const Key& key) {
-    std::shared_lock<std::shared_mutex> lock(mutex_);
+    auto readlock = rlock();
     
     auto it = data_.find(key);
-    if (it == data_.end() || isKeyExpired(key)) {
+    if (it == data_.end() || it->second->isExpired()) {
         return "";
     }
+    auto keylock = it->second->rlock();
     
     auto* string_item = dynamic_cast<StringItem*>(it->second.get());
     if (string_item) {
@@ -71,7 +97,7 @@ std::string StorageEngine::get(const Key& key) {
 }
 
 bool StorageEngine::del(const Key& key) {
-    std::unique_lock<std::shared_mutex> lock(mutex_);
+    auto writelock = wlock();
     
     auto it = data_.find(key);
     if (it != data_.end()) {
@@ -84,28 +110,27 @@ bool StorageEngine::del(const Key& key) {
 }
 
 bool StorageEngine::exists(const Key& key) {
-    std::shared_lock<std::shared_mutex> lock(mutex_);
+    auto readlock = rlock();
     
     auto it = data_.find(key);
-    if (it != data_.end() && !isKeyExpired(key)) {
+    if (it != data_.end() && !it->second->isExpired()) {
         // 更新访问时间和频率
         DataItem* item = it->second.get();
-        if (item) {
-            item->touch();
-            item->incrementFrequency();
-        }
+        item->touch();
+        item->incrementFrequency();
         return true;
     }
     return false;
 }
 
 bool StorageEngine::expire(const Key& key, int64_t seconds) {
-    std::unique_lock<std::shared_mutex> lock(mutex_);
+    auto readlock = rlock();
     
     auto it = data_.find(key);
-    if (it == data_.end() || isKeyExpired(key)) {
+    if (it == data_.end() || it->second->isExpired()) {
         return false;
     }
+    auto keylock = it->second->lock();
     
     DataItem* item = it->second.get();
     if (item) {
@@ -118,13 +143,14 @@ bool StorageEngine::expire(const Key& key, int64_t seconds) {
 }
 
 int64_t StorageEngine::ttl(const Key& key) {
-    std::shared_lock<std::shared_mutex> lock(mutex_);
+    auto readlock = rlock();
     
     auto it = data_.find(key);
-    if (it == data_.end() || isKeyExpired(key)) {
+    if (it == data_.end() || it->second->isExpired()) {
         return -2; // 键不存在
     }
-    
+    auto keylock = it->second->rlock();
+
     DataItem* item = it->second.get();
     if (item && item->hasExpiration()) {
         auto now = Utils::getCurrentTime();
@@ -137,10 +163,11 @@ int64_t StorageEngine::ttl(const Key& key) {
 }
 
 int64_t StorageEngine::incr(const Key& key) {
-    std::unique_lock<std::shared_mutex> lock(mutex_);
+    auto readlock = rlock();
     
     auto it = data_.find(key);
-    if (it != data_.end() && !isKeyExpired(key)) {
+    if (it != data_.end() && !it->second->isExpired()) {
+        auto keylock = it->second->lock();
         auto* string_item = dynamic_cast<StringItem*>(it->second.get());
         if (string_item) {
             std::string current_value = string_item->getValue();
@@ -151,18 +178,20 @@ int64_t StorageEngine::incr(const Key& key) {
             }
         }
     }
-    
     // 键不存在或不是数字，设置为1
+    readlock.unlock();
+    auto writelock = wlock();
     data_[key] = createStringItem("1");
     total_keys_++;
     return 1;
 }
 
 int64_t StorageEngine::decr(const Key& key) {
-    std::unique_lock<std::shared_mutex> lock(mutex_);
+    auto readlock = rlock();
     
     auto it = data_.find(key);
-    if (it != data_.end() && !isKeyExpired(key)) {
+    if (it != data_.end() && !it->second->isExpired()) {
+        auto keylock = it->second->lock();
         auto* string_item = dynamic_cast<StringItem*>(it->second.get());
         if (string_item) {
             std::string current_value = string_item->getValue();
@@ -175,25 +204,27 @@ int64_t StorageEngine::decr(const Key& key) {
     }
     
     // 键不存在或不是数字，设置为-1
+    readlock.unlock();
+    auto writelock = wlock();
     data_[key] = createStringItem("-1");
     total_keys_++;
     return -1;
 }
 
 void StorageEngine::flush() {
-    std::unique_lock<std::shared_mutex> lock(mutex_);
+    auto writelock = wlock();
     data_.clear();
     total_keys_ = 0;
     expired_keys_ = 0;
 }
 
 size_t StorageEngine::size() const {
-    std::shared_lock<std::shared_mutex> lock(mutex_);
+    auto readlock = rlock();
     return data_.size();
 }
 
 std::vector<Key> StorageEngine::keys() const {
-    std::shared_lock<std::shared_mutex> lock(mutex_);
+    auto readlock = rlock();
     std::vector<Key> result;
     result.reserve(data_.size());
     
@@ -227,11 +258,11 @@ std::string StorageEngine::getMemoryStats() const {
 }
 
 void StorageEngine::cleanupExpiredKeys() {
-    std::unique_lock<std::shared_mutex> lock(mutex_);
+    auto writelock = wlock();
     
     auto it = data_.begin();
     while (it != data_.end()) {
-        if (isKeyExpired(it->first)) {
+        if (it->second->isExpired()) {
             it = data_.erase(it);
             expired_keys_++;
         } else {
@@ -257,7 +288,6 @@ bool StorageEngine::isKeyExpired(const Key& key) const {
     if (it == data_.end()) {
         return false;
     }
-    
     return it->second->isExpired();
 }
 
@@ -318,34 +348,44 @@ std::unique_ptr<DataItem> StorageEngine::createBitmapItem(Timestamp expire_time)
 }
 
 bool StorageEngine::hset(const Key& key, const Value& field, const Value& value) {
-    std::unique_lock<std::shared_mutex> lock(mutex_);
-    
-    auto it = data_.find(key);
+    auto readlock = rlock();
+    auto writelock = wlock_deferred();
     HashItem* hash_item = nullptr;
-    
-    if (it == data_.end() || isKeyExpired(key)) {
-        // 创建新的哈希项
-        data_[key] = createHashItem();
-        hash_item = dynamic_cast<HashItem*>(data_[key].get());
-        total_keys_++;
-    } else {
-        // 检查是否是哈希类型
-        hash_item = dynamic_cast<HashItem*>(it->second.get());
-        if (!hash_item) {
-            return false; // 键存在但不是哈希类型
+    auto it = data_.find(key);
+    if (it == data_.end() || it->second->isExpired()) {
+        readlock.unlock();
+        writelock.lock();
+        it = data_.find(key);
+        if (it == data_.end() || it->second->isExpired()) {
+            auto is_newkey = (it == data_.end());
+            // 创建新的哈希项
+            auto new_item = createHashItem();
+            hash_item = dynamic_cast<HashItem*>(new_item.get());
+            assert(hash_item != nullptr);
+            it = data_.insert_or_assign(key, std::move(new_item)).first;
+            it = data_.find(key);
+            if (is_newkey) {
+                total_keys_++;
+            }
         }
     }
-    
+    auto keylock = it->second->lock();
+    // 检查是否是哈希类型
+    hash_item = dynamic_cast<HashItem*>(it->second.get());
+    if (!hash_item) {
+        return false; // 键存在但不是哈希类型
+    }
     return hash_item->setField(field, value);
 }
 
 std::string StorageEngine::hget(const Key& key, const Value& field) {
-    std::shared_lock<std::shared_mutex> lock(mutex_);
+    auto readlock = rlock();
     
     auto it = data_.find(key);
-    if (it == data_.end() || isKeyExpired(key)) {
+    if (it == data_.end() || it->second->isExpired()) {
         return "";
     }
+    auto keylock = it->second->rlock();
     
     auto* hash_item = dynamic_cast<HashItem*>(it->second.get());
     if (!hash_item) {
@@ -363,12 +403,13 @@ std::string StorageEngine::hget(const Key& key, const Value& field) {
 }
 
 std::vector<std::pair<Value, Value>> StorageEngine::hgetall(const Key& key) {
-    std::shared_lock<std::shared_mutex> lock(mutex_);
+    auto readlock = rlock();
     
     auto it = data_.find(key);
-    if (it == data_.end() || isKeyExpired(key)) {
+    if (it == data_.end() || it->second->isExpired()) {
         return {};
     }
+    auto keylock = it->second->rlock();
     
     auto* hash_item = dynamic_cast<HashItem*>(it->second.get());
     if (!hash_item) {
@@ -383,13 +424,14 @@ std::vector<std::pair<Value, Value>> StorageEngine::hgetall(const Key& key) {
 }
 
 bool StorageEngine::hdel(const Key& key, const Value& field) {
-    std::unique_lock<std::shared_mutex> lock(mutex_);
+    auto readlock = rlock();
     
     auto it = data_.find(key);
-    if (it == data_.end() || isKeyExpired(key)) {
+    if (it == data_.end() || it->second->isExpired()) {
         return false;
     }
-    
+    auto keylock = it->second->lock();
+
     auto* hash_item = dynamic_cast<HashItem*>(it->second.get());
     if (!hash_item) {
         return false;
@@ -407,13 +449,14 @@ bool StorageEngine::hdel(const Key& key, const Value& field) {
 }
 
 bool StorageEngine::hexists(const Key& key, const Value& field) {
-    std::shared_lock<std::shared_mutex> lock(mutex_);
+    auto readlock = rlock();
     
     auto it = data_.find(key);
-    if (it == data_.end() || isKeyExpired(key)) {
+    if (it == data_.end() || it->second->isExpired()) {
         return false;
     }
-    
+    auto keylock = it->second->rlock();
+
     auto* hash_item = dynamic_cast<HashItem*>(it->second.get());
     if (!hash_item) {
         return false;
@@ -423,13 +466,14 @@ bool StorageEngine::hexists(const Key& key, const Value& field) {
 }
 
 std::vector<Value> StorageEngine::hkeys(const Key& key) {
-    std::shared_lock<std::shared_mutex> lock(mutex_);
+    auto readlock = rlock();
     
     auto it = data_.find(key);
-    if (it == data_.end() || isKeyExpired(key)) {
+    if (it == data_.end() || it->second->isExpired()) {
         return {};
     }
-    
+    auto keylock = it->second->rlock();
+
     auto* hash_item = dynamic_cast<HashItem*>(it->second.get());
     if (!hash_item) {
         return {};
@@ -443,12 +487,13 @@ std::vector<Value> StorageEngine::hkeys(const Key& key) {
 }
 
 std::vector<Value> StorageEngine::hvals(const Key& key) {
-    std::shared_lock<std::shared_mutex> lock(mutex_);
+    auto readlock = rlock();
     
     auto it = data_.find(key);
-    if (it == data_.end() || isKeyExpired(key)) {
+    if (it == data_.end() || it->second->isExpired()) {
         return {};
     }
+    auto keylock = it->second->rlock();
     
     auto* hash_item = dynamic_cast<HashItem*>(it->second.get());
     if (!hash_item) {
@@ -463,12 +508,13 @@ std::vector<Value> StorageEngine::hvals(const Key& key) {
 }
 
 size_t StorageEngine::hlen(const Key& key) {
-    std::shared_lock<std::shared_mutex> lock(mutex_);
+    auto readlock = rlock();
     
     auto it = data_.find(key);
-    if (it == data_.end() || isKeyExpired(key)) {
+    if (it == data_.end() || it->second->isExpired()) {
         return 0;
     }
+    auto keylock = it->second->rlock();
     
     auto* hash_item = dynamic_cast<HashItem*>(it->second.get());
     if (!hash_item) {
@@ -479,16 +525,23 @@ size_t StorageEngine::hlen(const Key& key) {
 }
 
 size_t StorageEngine::lpush(const Key& key, const Value& value) {
-    std::unique_lock<std::shared_mutex> lock(mutex_);
+    auto readlock = rlock();
+    auto writelock = wlock_deferred();
     
     auto it = data_.find(key);
     ListItem* list_item = nullptr;
     
-    if (it == data_.end() || isKeyExpired(key)) {
+    if (it == data_.end() || it->second->isExpired()) {
+        bool is_newkey = (it == data_.end());
         // 创建新的列表项
-        data_[key] = createListItem();
-        list_item = dynamic_cast<ListItem*>(data_[key].get());
-        total_keys_++;
+        readlock.unlock();
+        writelock.lock();
+        it = data_.insert_or_assign(key, createListItem()).first;
+        
+        list_item = dynamic_cast<ListItem*>(it->second.get());
+        if (is_newkey) {
+            total_keys_++;
+        }
     } else {
         // 检查是否是列表类型
         list_item = dynamic_cast<ListItem*>(it->second.get());
@@ -496,21 +549,27 @@ size_t StorageEngine::lpush(const Key& key, const Value& value) {
             return 0; // 键存在但不是列表类型
         }
     }
-    
+    auto keylock = it->second->lock();
     return list_item->lpush(value);
 }
 
 size_t StorageEngine::rpush(const Key& key, const Value& value) {
-    std::unique_lock<std::shared_mutex> lock(mutex_);
+    auto readlock = rlock();
+    auto writelock = wlock_deferred();
     
     auto it = data_.find(key);
     ListItem* list_item = nullptr;
     
-    if (it == data_.end() || isKeyExpired(key)) {
+    if (it == data_.end() || it->second->isExpired()) {
+        bool is_newkey = (it == data_.end());
         // 创建新的列表项
-        data_[key] = createListItem();
-        list_item = dynamic_cast<ListItem*>(data_[key].get());
-        total_keys_++;
+        readlock.unlock();
+        writelock.lock();
+        it = data_.insert_or_assign(key, createListItem()).first;
+        list_item = dynamic_cast<ListItem*>(it->second.get());
+        if (is_newkey) {
+            total_keys_++;
+        }
     } else {
         // 检查是否是列表类型
         list_item = dynamic_cast<ListItem*>(it->second.get());
@@ -518,15 +577,15 @@ size_t StorageEngine::rpush(const Key& key, const Value& value) {
             return 0; // 键存在但不是列表类型
         }
     }
-    
+    auto keylock = it->second->lock();
     return list_item->rpush(value);
 }
 
 std::string StorageEngine::lpop(const Key& key) {
-    std::unique_lock<std::shared_mutex> lock(mutex_);
+    auto readlock = rlock();
     
     auto it = data_.find(key);
-    if (it == data_.end() || isKeyExpired(key)) {
+    if (it == data_.end() || it->second->isExpired()) {
         return "";
     }
     
@@ -536,6 +595,7 @@ std::string StorageEngine::lpop(const Key& key) {
     }
     
     Value value;
+    auto keylock = it->second->lock();
     if (list_item->lpop(value)) {
         // 更新访问时间和频率
         list_item->touch();
@@ -543,6 +603,8 @@ std::string StorageEngine::lpop(const Key& key) {
         
         // 如果列表为空，删除整个键
         if (list_item->empty()) {
+            keylock.unlock();
+            auto writelock = wlock();
             data_.erase(it);
             total_keys_--;
         }
@@ -553,10 +615,10 @@ std::string StorageEngine::lpop(const Key& key) {
 }
 
 std::string StorageEngine::rpop(const Key& key) {
-    std::unique_lock<std::shared_mutex> lock(mutex_);
+    auto readlock = rlock();
     
     auto it = data_.find(key);
-    if (it == data_.end() || isKeyExpired(key)) {
+    if (it == data_.end() || it->second->isExpired()) {
         return "";
     }
     
@@ -566,6 +628,7 @@ std::string StorageEngine::rpop(const Key& key) {
     }
     
     Value value;
+    auto keylock = it->second->lock();
     if (list_item->rpop(value)) {
         // 更新访问时间和频率
         list_item->touch();
@@ -573,6 +636,8 @@ std::string StorageEngine::rpop(const Key& key) {
         
         // 如果列表为空，删除整个键
         if (list_item->empty()) {
+            keylock.unlock();
+            auto writelock = wlock();
             data_.erase(it);
             total_keys_--;
         }
@@ -583,10 +648,10 @@ std::string StorageEngine::rpop(const Key& key) {
 }
 
 size_t StorageEngine::llen(const Key& key) {
-    std::shared_lock<std::shared_mutex> lock(mutex_);
+    auto readlock = rlock();
     
     auto it = data_.find(key);
-    if (it == data_.end() || isKeyExpired(key)) {
+    if (it == data_.end() || it->second->isExpired()) {
         return 0;
     }
     
@@ -598,15 +663,15 @@ size_t StorageEngine::llen(const Key& key) {
     // 更新访问时间和频率
     list_item->touch();
     list_item->incrementFrequency();
-    
+    auto keylock = it->second->rlock();
     return list_item->size();
 }
 
 std::vector<Value> StorageEngine::lrange(const Key& key, size_t start, size_t stop) {
-    std::shared_lock<std::shared_mutex> lock(mutex_);
+    auto readlock = rlock();
     
     auto it = data_.find(key);
-    if (it == data_.end() || isKeyExpired(key)) {
+    if (it == data_.end() || it->second->isExpired()) {
         return {};
     }
     
@@ -618,7 +683,7 @@ std::vector<Value> StorageEngine::lrange(const Key& key, size_t start, size_t st
     // 更新访问时间和频率
     list_item->touch();
     list_item->incrementFrequency();
-    
+    auto keylock = it->second->rlock();
     return list_item->lrange(start, stop);
 }
 
@@ -677,33 +742,38 @@ std::unique_ptr<DataItem> DataItemFactory::create(DataType type, const std::stri
 }
 
 size_t StorageEngine::sadd(const Key& key, const std::vector<Value>& members) {
-    std::unique_lock<std::shared_mutex> lock(mutex_);
-    
+    auto readlock = rlock();
+    auto writelock = wlock_deferred();
     auto it = data_.find(key);
     SetItem* set_item = nullptr;
     
-    if (it == data_.end() || isKeyExpired(key)) {
-        // 创建新的集合项
-        data_[key] = createSetItem();
-        set_item = dynamic_cast<SetItem*>(data_[key].get());
-        total_keys_++;
-    } else {
-        // 检查是否是集合类型
-        set_item = dynamic_cast<SetItem*>(it->second.get());
-        if (!set_item) {
-            return 0; // 键存在但不是集合类型
+    if (it == data_.end() || it->second->isExpired()) {
+        readlock.unlock();
+        writelock.lock();
+        it = data_.find(key);
+        if (it == data_.end() || it->second->isExpired()) {
+            // 创建新的集合项
+            it = data_.insert_or_assign(key, createSetItem()).first;
+            set_item = dynamic_cast<SetItem*>(data_[key].get());
+            total_keys_++;
         }
     }
-    
+    // 检查是否是集合类型
+    set_item = dynamic_cast<SetItem*>(it->second.get());
+    if (!set_item) {
+        return 0; // 键存在但不是集合类型
+    }
     // 添加多个元素并返回成功添加的个数
+    auto keylock = it->second->lock();
     return set_item->sadd(members);
 }
 
 size_t StorageEngine::srem(const Key& key, const std::vector<Value>& members) {
-    std::unique_lock<std::shared_mutex> lock(mutex_);
-    
+    auto readlock = rlock();
+    auto writelock = wlock_deferred();
+
     auto it = data_.find(key);
-    if (it == data_.end() || isKeyExpired(key)) {
+    if (it == data_.end() || it->second->isExpired()) {
         return 0; // 键不存在
     }
     
@@ -714,6 +784,7 @@ size_t StorageEngine::srem(const Key& key, const std::vector<Value>& members) {
     }
     
     // 删除多个元素并返回成功删除的个数
+    auto keylock = it->second->lock();
     size_t removed_count = set_item->srem(members);
     
     // 如果集合为空，删除整个键
@@ -726,10 +797,10 @@ size_t StorageEngine::srem(const Key& key, const std::vector<Value>& members) {
 }
 
 std::vector<Value> StorageEngine::smembers(const Key& key) {
-    std::shared_lock<std::shared_mutex> lock(mutex_);
+    auto readlock = rlock();
     
     auto it = data_.find(key);
-    if (it == data_.end() || isKeyExpired(key)) {
+    if (it == data_.end() || it->second->isExpired()) {
         return {};
     }
     
@@ -741,15 +812,15 @@ std::vector<Value> StorageEngine::smembers(const Key& key) {
     // 更新访问时间和频率
     set_item->touch();
     set_item->incrementFrequency();
-    
+    auto keylock = it->second->rlock();
     return set_item->smembers();
 }
 
 bool StorageEngine::sismember(const Key& key, const Value& member) {
-    std::shared_lock<std::shared_mutex> lock(mutex_);
+    auto readlock = rlock();
     
     auto it = data_.find(key);
-    if (it == data_.end() || isKeyExpired(key)) {
+    if (it == data_.end() || it->second->isExpired()) {
         return false;
     }
     
@@ -761,15 +832,15 @@ bool StorageEngine::sismember(const Key& key, const Value& member) {
     // 更新访问时间和频率
     set_item->touch();
     set_item->incrementFrequency();
-    
+    auto keylock = it->second->rlock();
     return set_item->sismember(member);
 }
 
 size_t StorageEngine::scard(const Key& key) {
-    std::shared_lock<std::shared_mutex> lock(mutex_);
+    auto readlock = rlock();
     
     auto it = data_.find(key);
-    if (it == data_.end() || isKeyExpired(key)) {
+    if (it == data_.end() || it->second->isExpired()) {
         return 0;
     }
     
@@ -781,63 +852,69 @@ size_t StorageEngine::scard(const Key& key) {
     // 更新访问时间和频率
     set_item->touch();
     set_item->incrementFrequency();
-    
+    auto keylock = it->second->rlock();
     return set_item->scard();
 }
 
 DataItem* StorageEngine::getDataItem(const Key& key) {
-    std::shared_lock<std::shared_mutex> lock(mutex_);
+    auto readlock = rlock();
     
     auto it = data_.find(key);
-    if (it == data_.end() || isKeyExpired(key)) {
+    if (it == data_.end() || it->second->isExpired()) {
         return nullptr;
     }
-    
+    auto keylock = it->second->rlock();
     return it->second.get();
 }
 
 void StorageEngine::setDataItem(const Key& key, std::unique_ptr<DataItem> item) {
-    std::unique_lock<std::shared_mutex> lock(mutex_);
-    
+    assert(item.get());
+    auto writelock = wlock();
+
     auto it = data_.find(key);
     if (it == data_.end()) {
         // 新键
-        data_[key] = std::move(item);
         total_keys_++;
-    } else {
-        // 更新现有键
-        data_[key] = std::move(item);
     }
+    // 更新现有键
+    it = data_.insert_or_assign(key, std::move(item)).first;
 }
 
 size_t StorageEngine::zadd(const Key& key, const std::vector<std::pair<Value, double>>& members_with_scores) {
-    std::unique_lock<std::shared_mutex> lock(mutex_);
+    auto readlock = rlock();
+    auto writelock = wlock_deferred();
     
     auto it = data_.find(key);
     ZSetItem* zset_item = nullptr;
     
-    if (it == data_.end() || isKeyExpired(key)) {
-        // 创建新的有序集合项
-        data_[key] = createZSetItem();
-        zset_item = dynamic_cast<ZSetItem*>(data_[key].get());
-        total_keys_++;
-    } else {
-        // 检查是否是有序集合类型
-        zset_item = dynamic_cast<ZSetItem*>(it->second.get());
-        if (!zset_item) {
-            return 0; // 键存在但不是有序集合类型
+    if (it == data_.end() || it->second->isExpired()) {
+        readlock.unlock();
+        writelock.lock();
+        it = data_.find(key);
+        if (it == data_.end()) {
+            // 创建新的有序集合项
+            it = data_.insert_or_assign(key, createZSetItem()).first;
+            zset_item = dynamic_cast<ZSetItem*>(data_[key].get());
+            total_keys_++;
         }
+    }
+    // 检查是否是有序集合类型
+    zset_item = dynamic_cast<ZSetItem*>(it->second.get());
+    if (!zset_item) {
+        return 0; // 键存在但不是有序集合类型
     }
     
     // 添加多个元素并返回成功添加的个数
+    auto keylock = it->second->lock();
     return zset_item->zadd(members_with_scores);
 }
 
 size_t StorageEngine::zrem(const Key& key, const std::vector<Value>& members) {
-    std::unique_lock<std::shared_mutex> lock(mutex_);
+    auto readlock = rlock();
+    auto writelock = wlock_deferred();
     
     auto it = data_.find(key);
-    if (it == data_.end() || isKeyExpired(key)) {
+    if (it == data_.end() || it->second->isExpired()) {
         return 0; // 键不存在
     }
     
@@ -848,10 +925,14 @@ size_t StorageEngine::zrem(const Key& key, const std::vector<Value>& members) {
     }
     
     // 删除多个元素并返回成功删除的个数
+    auto keylock = it->second->lock();
     size_t removed_count = zset_item->zrem(members);
     
     // 如果集合为空，删除整个键
     if (zset_item->empty()) {
+        keylock.unlock();
+        readlock.unlock();
+        writelock.lock();
         data_.erase(it);
         total_keys_--;
     }
@@ -860,10 +941,10 @@ size_t StorageEngine::zrem(const Key& key, const std::vector<Value>& members) {
 }
 
 bool StorageEngine::zscore(const Key& key, const Value& member, double& score) {
-    std::shared_lock<std::shared_mutex> lock(mutex_);
+    auto readlock = rlock();
     
     auto it = data_.find(key);
-    if (it == data_.end() || isKeyExpired(key)) {
+    if (it == data_.end() || it->second->isExpired()) {
         return false;
     }
     
@@ -875,15 +956,15 @@ bool StorageEngine::zscore(const Key& key, const Value& member, double& score) {
     // 更新访问时间和频率
     zset_item->touch();
     zset_item->incrementFrequency();
-    
+    auto keylock = zset_item->rlock();
     return zset_item->zscore(member, score);
 }
 
 bool StorageEngine::zismember(const Key& key, const Value& member) {
-    std::shared_lock<std::shared_mutex> lock(mutex_);
+    auto readlock = rlock();
     
     auto it = data_.find(key);
-    if (it == data_.end() || isKeyExpired(key)) {
+    if (it == data_.end() || it->second->isExpired()) {
         return false;
     }
     
@@ -895,15 +976,15 @@ bool StorageEngine::zismember(const Key& key, const Value& member) {
     // 更新访问时间和频率
     zset_item->touch();
     zset_item->incrementFrequency();
-    
+    auto keylock = zset_item->rlock();
     return zset_item->zismember(member);
 }
 
 bool StorageEngine::zrank(const Key& key, const Value& member, size_t& rank) {
-    std::shared_lock<std::shared_mutex> lock(mutex_);
+    auto readlock = rlock();
     
     auto it = data_.find(key);
-    if (it == data_.end() || isKeyExpired(key)) {
+    if (it == data_.end() || it->second->isExpired()) {
         return false;
     }
     
@@ -915,15 +996,15 @@ bool StorageEngine::zrank(const Key& key, const Value& member, size_t& rank) {
     // 更新访问时间和频率
     zset_item->touch();
     zset_item->incrementFrequency();
-    
+    auto keylock = zset_item->rlock();
     return zset_item->zrank(member, rank);
 }
 
 bool StorageEngine::zrevrank(const Key& key, const Value& member, size_t& rank) {
-    std::shared_lock<std::shared_mutex> lock(mutex_);
+    auto readlock = rlock();
     
     auto it = data_.find(key);
-    if (it == data_.end() || isKeyExpired(key)) {
+    if (it == data_.end() || it->second->isExpired()) {
         return false;
     }
     
@@ -935,15 +1016,15 @@ bool StorageEngine::zrevrank(const Key& key, const Value& member, size_t& rank) 
     // 更新访问时间和频率
     zset_item->touch();
     zset_item->incrementFrequency();
-    
+    auto keylock = zset_item->rlock();
     return zset_item->zrevrank(member, rank);
 }
 
 std::vector<std::pair<Value, double>> StorageEngine::zrange(const Key& key, size_t start, size_t stop) {
-    std::shared_lock<std::shared_mutex> lock(mutex_);
+    auto readlock = rlock();
     
     auto it = data_.find(key);
-    if (it == data_.end() || isKeyExpired(key)) {
+    if (it == data_.end() || it->second->isExpired()) {
         return {};
     }
     
@@ -955,15 +1036,15 @@ std::vector<std::pair<Value, double>> StorageEngine::zrange(const Key& key, size
     // 更新访问时间和频率
     zset_item->touch();
     zset_item->incrementFrequency();
-    
+    auto keylock = zset_item->rlock();
     return zset_item->zrange(start, stop);
 }
 
 std::vector<std::pair<Value, double>> StorageEngine::zrevrange(const Key& key, size_t start, size_t stop) {
-    std::shared_lock<std::shared_mutex> lock(mutex_);
+    auto readlock = rlock();
     
     auto it = data_.find(key);
-    if (it == data_.end() || isKeyExpired(key)) {
+    if (it == data_.end() || it->second->isExpired()) {
         return {};
     }
     
@@ -975,15 +1056,15 @@ std::vector<std::pair<Value, double>> StorageEngine::zrevrange(const Key& key, s
     // 更新访问时间和频率
     zset_item->touch();
     zset_item->incrementFrequency();
-    
+    auto keylock = zset_item->rlock();
     return zset_item->zrevrange(start, stop);
 }
 
 std::vector<std::pair<Value, double>> StorageEngine::zrangebyscore(const Key& key, double min, double max) {
-    std::shared_lock<std::shared_mutex> lock(mutex_);
+    auto readlock = rlock();
     
     auto it = data_.find(key);
-    if (it == data_.end() || isKeyExpired(key)) {
+    if (it == data_.end() || it->second->isExpired()) {
         return {};
     }
     
@@ -995,15 +1076,15 @@ std::vector<std::pair<Value, double>> StorageEngine::zrangebyscore(const Key& ke
     // 更新访问时间和频率
     zset_item->touch();
     zset_item->incrementFrequency();
-    
+    auto keylock = zset_item->rlock();
     return zset_item->zrangebyscore(min, max);
 }
 
 std::vector<std::pair<Value, double>> StorageEngine::zrevrangebyscore(const Key& key, double max, double min) {
-    std::shared_lock<std::shared_mutex> lock(mutex_);
+    auto readlock = rlock();
     
     auto it = data_.find(key);
-    if (it == data_.end() || isKeyExpired(key)) {
+    if (it == data_.end() || it->second->isExpired()) {
         return {};
     }
     
@@ -1015,15 +1096,15 @@ std::vector<std::pair<Value, double>> StorageEngine::zrevrangebyscore(const Key&
     // 更新访问时间和频率
     zset_item->touch();
     zset_item->incrementFrequency();
-    
+    auto keylock = zset_item->rlock();
     return zset_item->zrevrangebyscore(max, min);
 }
 
 size_t StorageEngine::zcount(const Key& key, double min, double max) {
-    std::shared_lock<std::shared_mutex> lock(mutex_);
+    auto readlock = rlock();
     
     auto it = data_.find(key);
-    if (it == data_.end() || isKeyExpired(key)) {
+    if (it == data_.end() || it->second->isExpired()) {
         return 0;
     }
     
@@ -1031,15 +1112,15 @@ size_t StorageEngine::zcount(const Key& key, double min, double max) {
     if (!zset_item) {
         return 0;
     }
-    
+    auto keylock = zset_item->rlock();
     return zset_item->zcount(min, max);
 }
 
 size_t StorageEngine::zcard(const Key& key) {
-    std::shared_lock<std::shared_mutex> lock(mutex_);
+    auto readlock = rlock();
     
     auto it = data_.find(key);
-    if (it == data_.end() || isKeyExpired(key)) {
+    if (it == data_.end() || it->second->isExpired()) {
         return 0;
     }
     
@@ -1047,42 +1128,45 @@ size_t StorageEngine::zcard(const Key& key) {
     if (!zset_item) {
         return 0;
     }
-    
+    auto keylock = zset_item->rlock();
     return zset_item->zcard();
 }
 
 // 位图操作实现
 bool StorageEngine::setBit(const Key& key, size_t offset, bool value) {
-    std::unique_lock<std::shared_mutex> lock(mutex_);
-    
+    auto readlock = rlock();
+    auto writelock = wlock_deferred();
     auto it = data_.find(key);
     BitmapItem* bitmap_item = nullptr;
-    
-    if (it == data_.end() || isKeyExpired(key)) {
+    if (it == data_.end() || it->second->isExpired()) {
         // 创建新的位图项
-        data_[key] = createBitmapItem();
-        bitmap_item = dynamic_cast<BitmapItem*>(data_[key].get());
-        total_keys_++;
-    } else {
-        // 检查是否是位图类型
-        bitmap_item = dynamic_cast<BitmapItem*>(it->second.get());
-        if (!bitmap_item) {
-            return false; // 键存在但不是位图类型
+        readlock.unlock();
+        writelock.lock();
+        // 检查键是否已存在
+        if (it == data_.end() || it->second->isExpired()) {
+            auto new_item = createBitmapItem();
+            bitmap_item = dynamic_cast<BitmapItem*>(new_item.get());
+            it = data_.insert_or_assign(key, std::move(new_item)).first;
+            total_keys_++;
         }
     }
-    
+    // 检查是否是位图类型
+    bitmap_item = dynamic_cast<BitmapItem*>(it->second.get());
+    if (!bitmap_item) {
+        return false; // 键存在但不是位图类型
+    }
     // 更新访问时间和频率
     bitmap_item->touch();
     bitmap_item->incrementFrequency();
-    
+    auto keylock = bitmap_item->lock();
     return bitmap_item->setBit(offset, value);
 }
 
 bool StorageEngine::getBit(const Key& key, size_t offset) {
-    std::shared_lock<std::shared_mutex> lock(mutex_);
+    auto readlock = rlock();
     
     auto it = data_.find(key);
-    if (it == data_.end() || isKeyExpired(key)) {
+    if (it == data_.end() || it->second->isExpired()) {
         return false;
     }
     
@@ -1094,15 +1178,15 @@ bool StorageEngine::getBit(const Key& key, size_t offset) {
     // 更新访问时间和频率
     bitmap_item->touch();
     bitmap_item->incrementFrequency();
-    
+    auto keylock = bitmap_item->rlock();
     return bitmap_item->getBit(offset);
 }
 
 size_t StorageEngine::bitCount(const Key& key) {
-    std::shared_lock<std::shared_mutex> lock(mutex_);
+    auto readlock = rlock();
     
     auto it = data_.find(key);
-    if (it == data_.end() || isKeyExpired(key)) {
+    if (it == data_.end() || it->second->isExpired()) {
         return 0;
     }
     
@@ -1114,15 +1198,15 @@ size_t StorageEngine::bitCount(const Key& key) {
     // 更新访问时间和频率
     bitmap_item->touch();
     bitmap_item->incrementFrequency();
-    
+    auto keylock = bitmap_item->rlock();
     return bitmap_item->bitCount();
 }
 
 size_t StorageEngine::bitCount(const Key& key, size_t start, size_t end) {
-    std::shared_lock<std::shared_mutex> lock(mutex_);
+    auto readlock = rlock();
     
     auto it = data_.find(key);
-    if (it == data_.end() || isKeyExpired(key)) {
+    if (it == data_.end() || it->second->isExpired()) {
         return 0;
     }
     
@@ -1134,7 +1218,7 @@ size_t StorageEngine::bitCount(const Key& key, size_t start, size_t end) {
     // 更新访问时间和频率
     bitmap_item->touch();
     bitmap_item->incrementFrequency();
-    
+    auto keylock = bitmap_item->rlock();
     return bitmap_item->bitCount(start, end);
 }
 
@@ -1145,7 +1229,7 @@ bool StorageEngine::bitOp(const std::string& operation, const Key& destkey, cons
     std::vector<BitmapItem*> bitmap_items;
     for (const auto& key : keys) {
         auto it = data_.find(key);
-        if (it == data_.end() || isKeyExpired(key)) {
+        if (it == data_.end() || it->second->isExpired()) {
             return false;
         }
         
@@ -1181,7 +1265,7 @@ bool StorageEngine::pfadd(const Key& key, const std::vector<Value>& elements) {
     auto it = data_.find(key);
     HyperLogLogItem* hll_item = nullptr;
     
-    if (it == data_.end() || isKeyExpired(key)) {
+    if (it == data_.end() || it->second->isExpired()) {
         // 创建新的HyperLogLog项
         data_[key] = createHyperLogLogItem();
         hll_item = dynamic_cast<HyperLogLogItem*>(data_[key].get());
@@ -1205,10 +1289,13 @@ bool StorageEngine::pfadd(const Key& key, const std::vector<Value>& elements) {
 }
 
 uint64_t StorageEngine::pfcount(const Key& key) {
-    std::shared_lock<std::shared_mutex> lock(mutex_);
+    auto readlock = rlock();
     
     auto it = data_.find(key);
-    if (it == data_.end() || isKeyExpired(key)) {
+    if (it == data_.end()) {
+        return 0;
+    }
+    if (it->second->isExpired()) {
         return 0;
     }
     
@@ -1220,7 +1307,7 @@ uint64_t StorageEngine::pfcount(const Key& key) {
     // 更新访问时间和频率
     hll_item->touch();
     hll_item->incrementFrequency();
-    
+    auto keylock = hll_item->rlock();
     return hll_item->count();
 }
 
@@ -1231,7 +1318,7 @@ bool StorageEngine::pfmerge(const Key& destkey, const std::vector<Key>& sourceke
     std::vector<HyperLogLogItem*> hll_items;
     for (const auto& key : sourcekeys) {
         auto it = data_.find(key);
-        if (it == data_.end() || isKeyExpired(key)) {
+        if (it == data_.end() || it->second->isExpired()) {
             continue; // 忽略不存在或过期的键
         }
         
@@ -1267,7 +1354,7 @@ std::unique_ptr<DataItem> StorageEngine::createHyperLogLogItem(Timestamp expire_
 
 // 淘汰策略相关方法实现
 std::vector<Key> StorageEngine::getAllKeys() const {
-    std::shared_lock<std::shared_mutex> lock(mutex_);
+    auto readlock = rlock();
     std::vector<Key> result;
     result.reserve(data_.size());
     
@@ -1279,51 +1366,51 @@ std::vector<Key> StorageEngine::getAllKeys() const {
 }
 
 bool StorageEngine::hasExpiration(const Key& key) const {
-    std::shared_lock<std::shared_mutex> lock(mutex_);
+    auto readlock = rlock();
     
     auto it = data_.find(key);
     if (it == data_.end()) {
         return false;
     }
-    
+    // hasExpiration is atomic, so we can read it without a lock
     return it->second->hasExpiration();
 }
 
 Timestamp StorageEngine::getLastAccessed(const Key& key) const {
-    std::shared_lock<std::shared_mutex> lock(mutex_);
+    auto readlock = rlock();
     
     auto it = data_.find(key);
     if (it == data_.end()) {
         return Timestamp::min();
     }
-    
+    // getLastAccessed is atomic, so we can read it without a lock
     return it->second->getLastAccessed();
 }
 
 int StorageEngine::getAccessFrequency(const Key& key) const {
-    std::shared_lock<std::shared_mutex> lock(mutex_);
+    auto readlock = rlock();
     
     auto it = data_.find(key);
     if (it == data_.end()) {
         return 0;
     }
-    
+    // getAccessFrequency is atomic, so we can read it without a lock
     return it->second->getAccessFrequency();
 }
 
 Timestamp StorageEngine::getExpiration(const Key& key) const {
-    std::shared_lock<std::shared_mutex> lock(mutex_);
+    auto readlock = rlock();
     
     auto it = data_.find(key);
     if (it == data_.end() || !it->second->hasExpiration()) {
         return Timestamp::max();
     }
-    
+    // getExpiration is atomic, so we can read it without a lock
     return it->second->getExpiration();
 }
 
 size_t StorageEngine::getKeySize(const Key& key) const {
-    std::shared_lock<std::shared_mutex> lock(mutex_);
+    auto readlock = rlock();
     
     auto it = data_.find(key);
     if (it == data_.end()) {
@@ -1331,6 +1418,7 @@ size_t StorageEngine::getKeySize(const Key& key) const {
     }
     
     // 估算键的大小，包括键名和值
+    auto keylock = it->second->rlock();
     size_t size = key.size() + it->second->serialize().size();
     return size;
 }

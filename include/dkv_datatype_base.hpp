@@ -5,6 +5,8 @@
 #include <memory>
 #include <chrono>
 #include <atomic>
+#include <mutex>
+#include <shared_mutex>
 
 namespace dkv {
 
@@ -48,6 +50,11 @@ public:
     void incrementFrequency();
     uint64_t getAccessFrequency() const;
     
+    // 锁操作方法
+    std::unique_lock<std::shared_mutex> lock();
+    std::shared_lock<std::shared_mutex> rlock();
+    std::shared_mutex& getMutex();
+    
 protected:
     // TTL
     std::atomic<Timestamp> expire_time_;
@@ -55,6 +62,9 @@ protected:
     // 淘汰策略
     std::atomic<Timestamp> last_accessed_; // 最后访问时间
     std::atomic<uint64_t> access_frequency_ = {0}; // 访问频率
+    
+    // 读写锁，用于保护数据项的并发访问
+    mutable std::shared_mutex item_mutex_;
 };
 
 // 前向声明
