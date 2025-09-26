@@ -6,6 +6,7 @@
 #include <iostream>
 #include <cassert>
 #include <chrono>
+using namespace std;
 
 namespace dkv {
 
@@ -45,7 +46,7 @@ bool testBitmapItem() {
     assert(item1.bitCount(8, 100) == 1); // 位100
     
     // 测试带过期时间的位图项
-    auto expire_time = Utils::getCurrentTime() + std::chrono::seconds(10);
+    auto expire_time = Utils::getCurrentTime() + chrono::seconds(10);
     BitmapItem item2(expire_time);
     assert(item2.hasExpiration());
     assert(!item2.isExpired());
@@ -57,7 +58,7 @@ bool testBitmapItem() {
     assert(item2.bitCount() == 3);
     
     // 测试序列化和反序列化
-    std::string serialized = item1.serialize();
+    string serialized = item1.serialize();
     BitmapItem item3;
     item3.deserialize(serialized);
     assert(item3.getType() == DataType::BITMAP);
@@ -76,7 +77,7 @@ bool testBitmapItem() {
     item5.setBit(2, true);
     
     BitmapItem result_and, result_or, result_xor;
-    std::vector<BitmapItem*> items = {&item4, &item5};
+    vector<BitmapItem*> items = {&item4, &item5};
     
     // AND 操作
     assert(result_and.bitOpAnd(items));
@@ -110,11 +111,9 @@ bool testBitmapItem() {
 // 测试StorageEngine的位图命令
 bool testBitmapCommands() {
     StorageEngine storage;
-    
     // 测试SETBIT和GETBIT
     assert(storage.setBit("bitmap1", 0, true));
     assert(storage.getBit("bitmap1", 0) == true);
-    
     assert(storage.setBit("bitmap1", 1, true));
     assert(storage.getBit("bitmap1", 1) == true);
     
@@ -140,7 +139,7 @@ bool testBitmapCommands() {
     assert(storage.setBit("bitmap3", 2, true));
     
     // AND 操作
-    std::vector<Key> keys_and = {"bitmap2", "bitmap3"};
+    vector<Key> keys_and = {"bitmap2", "bitmap3"};
     assert(storage.bitOp("AND", "bitmap_and", keys_and));
     assert(storage.getBit("bitmap_and", 0) == false);
     assert(storage.getBit("bitmap_and", 1) == false);
@@ -148,7 +147,7 @@ bool testBitmapCommands() {
     assert(storage.bitCount("bitmap_and") == 1);
     
     // OR 操作
-    std::vector<Key> keys_or = {"bitmap2", "bitmap3"};
+    vector<Key> keys_or = {"bitmap2", "bitmap3"};
     assert(storage.bitOp("OR", "bitmap_or", keys_or));
     assert(storage.getBit("bitmap_or", 0) == true);
     assert(storage.getBit("bitmap_or", 1) == true);
@@ -156,7 +155,7 @@ bool testBitmapCommands() {
     assert(storage.bitCount("bitmap_or") == 3);
     
     // XOR 操作
-    std::vector<Key> keys_xor = {"bitmap2", "bitmap3"};
+    vector<Key> keys_xor = {"bitmap2", "bitmap3"};
     assert(storage.bitOp("XOR", "bitmap_xor", keys_xor));
     assert(storage.getBit("bitmap_xor", 0) == true);
     assert(storage.getBit("bitmap_xor", 1) == true);
@@ -164,7 +163,7 @@ bool testBitmapCommands() {
     assert(storage.bitCount("bitmap_xor") == 2);
     
     // NOT 操作
-    std::vector<Key> keys_not = {"bitmap2"};
+    vector<Key> keys_not = {"bitmap2"};
     assert(storage.bitOp("NOT", "bitmap_not", keys_not));
     // NOT操作后的结果取决于实现，这里我们只确保操作成功执行
     
@@ -181,7 +180,7 @@ bool testBitmapCommands() {
 int main() {
     using namespace dkv;
     
-    std::cout << "DKV Bitmap功能测试\n" << std::endl;
+    cout << "DKV Bitmap功能测试\n" << endl;
     
     TestRunner runner;
     

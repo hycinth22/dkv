@@ -134,7 +134,7 @@ public:
     void runTest(const std::string& test_name, std::function<bool()> test_func) {
         total_tests_++;
         std::cout << "运行测试: " << test_name << " ... ";
-        
+        std::cout.flush();
         try {
             if (test_func()) {
                 passed_tests_++;

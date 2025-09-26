@@ -10,9 +10,9 @@
 #include <vector>
 #include <chrono>
 #include <functional>
+using namespace std;
 
 namespace dkv {
-
 
 bool testUtils() {
     // 测试命令类型转换
@@ -45,48 +45,40 @@ bool testUtils() {
 
 bool testStorageEngine() {
     StorageEngine storage;
-    
     // 测试基本操作
     assert(storage.set("key1", "value1"));
     assert(storage.get("key1") == "value1");
     assert(storage.exists("key1"));
     assert(storage.size() == 1);
-    
     // 测试更新
     assert(storage.set("key1", "new_value"));
     assert(storage.get("key1") == "new_value");
-    
     // 测试删除
     assert(storage.del("key1"));
     assert(!storage.exists("key1"));
     assert(storage.get("key1").empty());
     assert(storage.size() == 0);
-    
     // 测试数值操作
     assert(storage.incr("counter") == 1);
     assert(storage.incr("counter") == 2);
     assert(storage.decr("counter") == 1);
     assert(storage.get("counter") == "1");
-    
     // 测试过期时间
     assert(storage.set("temp", "data", 2)); // 2秒后过期
     assert(storage.exists("temp"));
     int64_t ttl_value = storage.ttl("temp");
-    std::cout << "TTL值: " << ttl_value << std::endl;
-    
+    cout << "TTL值: " << ttl_value << endl;
     // 测试expire命令
     assert(storage.set("temp2", "data2"));
     assert(storage.expire("temp2", 2));
     int64_t ttl_value2 = storage.ttl("temp2");
-    std::cout << "TTL值2: " << ttl_value2 << std::endl;
-    
+    cout << "TTL值2: " << ttl_value2 << endl;
     // 测试TTL值在合理范围内
     // 考虑到系统时间精度和测试执行时机，允许TTL值为-1
     assert(ttl_value >= -1 && ttl_value <= 2);
     assert(ttl_value2 >= -1 && ttl_value2 <= 2);
-    
     // 等待过期（增加等待时间以确保键确实过期）
-    std::this_thread::sleep_for(std::chrono::milliseconds(2100));
+    this_thread::sleep_for(chrono::milliseconds(2100));
     // 手动清理过期键
     storage.cleanupExpiredKeys();
     assert(!storage.exists("temp"));
@@ -97,7 +89,7 @@ bool testStorageEngine() {
 
 bool testRESPProtocol() {
     // 测试命令解析
-    std::string command_data = "*3\r\n$3\r\nSET\r\n$3\r\nkey\r\n$5\r\nvalue\r\n";
+    string command_data = "*3\r\n$3\r\nSET\r\n$3\r\nkey\r\n$5\r\nvalue\r\n";
     Command cmd = RESPProtocol::parseCommand(command_data, 0);
     assert(cmd.type == CommandType::SET);
     assert(cmd.args.size() == 2);
@@ -106,19 +98,19 @@ bool testRESPProtocol() {
     
     // 测试响应序列化
     Response resp1(ResponseStatus::OK);
-    std::string resp1_str = RESPProtocol::serializeResponse(resp1);
+    string resp1_str = RESPProtocol::serializeResponse(resp1);
     assert(resp1_str == "+OK\r\n");
     
     Response resp2(ResponseStatus::ERROR, "Test error");
-    std::string resp2_str = RESPProtocol::serializeResponse(resp2);
+    string resp2_str = RESPProtocol::serializeResponse(resp2);
     assert(resp2_str == "-Test error\r\n");
     
     // 测试批量字符串序列化
-    std::string bulk_str = RESPProtocol::serializeBulkString("hello");
+    string bulk_str = RESPProtocol::serializeBulkString("hello");
     assert(bulk_str == "$5\r\nhello\r\n");
     
     // 测试空批量字符串
-    std::string null_str = RESPProtocol::serializeNull();
+    string null_str = RESPProtocol::serializeNull();
     assert(null_str == "$-1\r\n");
     
     return true;
@@ -149,12 +141,12 @@ bool testIntegration() {
     
     // 启动服务器
     if (!server.start()) {
-        std::cout << "无法启动测试服务器" << std::endl;
+        cout << "无法启动测试服务器" << endl;
         return false;
     }
     
     // 等待服务器启动
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    this_thread::sleep_for(chrono::milliseconds(100));
     
     // 这里可以添加客户端连接测试
     // 由于时间限制，这里只测试服务器启动
@@ -170,7 +162,7 @@ bool testIntegration() {
 int main() {
     using namespace dkv;
     
-    std::cout << "DKV 基本功能测试\n" << std::endl;
+    cout << "DKV 基本功能测试\n" << endl;
     
     TestRunner runner;
     
