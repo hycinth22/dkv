@@ -18,10 +18,10 @@ std::string SetItem::serialize() const {
     std::stringstream ss;
     
     // 序列化过期信息
-    ss << has_expiration_ << "\n";
-    if (has_expiration_) {
+    ss << (hasExpiration() ? "1" : "0") << "\n";
+    if (hasExpiration()) {
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
-            expire_time_.time_since_epoch());
+            expire_time_.load().time_since_epoch());
         ss << duration.count() << "\n";
     }
     
@@ -42,12 +42,12 @@ void SetItem::deserialize(const std::string& data) {
     
     // 反序列化过期信息
     std::getline(ss, line);
-    has_expiration_ = (line == "1");
+    bool has_exp = (line == "1");
     
-    if (has_expiration_) {
+    if (has_exp) {
         std::getline(ss, line);
         uint64_t ms = std::stoull(line);
-        expire_time_ = Timestamp(std::chrono::milliseconds(ms));
+        setExpiration(Timestamp(std::chrono::milliseconds(ms)));
     }
     
     // 清空现有元素

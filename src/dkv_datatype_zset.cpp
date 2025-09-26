@@ -20,10 +20,10 @@ std::string ZSetItem::serialize() const {
     std::stringstream ss;
     
     // 序列化过期信息
-    ss << has_expiration_ << "\n";
-    if (has_expiration_) {
+    ss << hasExpiration() << "\n";
+    if (hasExpiration()) {
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(
-            expire_time_.time_since_epoch());
+            getExpiration().time_since_epoch());
         ss << duration.count() << "\n";
     }
     
@@ -45,12 +45,11 @@ void ZSetItem::deserialize(const std::string& data) {
     
     // 反序列化过期信息
     std::getline(ss, line);
-    has_expiration_ = (line == "1");
-    
-    if (has_expiration_) {
+    bool has_expiration = (line == "1");
+    if (has_expiration) {
         std::getline(ss, line);
         uint64_t ms = std::stoull(line);
-        expire_time_ = Timestamp(std::chrono::milliseconds(ms));
+        setExpiration(Timestamp(std::chrono::milliseconds(ms)));
     }
     
     // 清空现有元素

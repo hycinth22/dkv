@@ -118,8 +118,8 @@ std::string HyperLogLogItem::serialize() const {
     }
     
     // 序列化过期时间
-    if (has_expiration_) {
-        auto duration = expire_time_.time_since_epoch();
+    if (hasExpiration()) {
+        auto duration = expire_time_.load().time_since_epoch();
         auto seconds = std::chrono::duration_cast<std::chrono::seconds>(duration).count();
         oss << ":" << seconds;
     }
@@ -146,14 +146,9 @@ void HyperLogLogItem::deserialize(const std::string& data) {
         // 读取过期时间
         std::string expire_str;
         if (std::getline(iss, expire_str)) {
-            try {
-                uint64_t seconds = std::stoull(expire_str);
-                auto duration = std::chrono::seconds(seconds);
-                expire_time_ = std::chrono::system_clock::time_point(duration);
-                has_expiration_ = true;
-            } catch (const std::invalid_argument&) {
-                has_expiration_ = false;
-            }
+            uint64_t seconds = std::stoull(expire_str);
+            auto duration = std::chrono::seconds(seconds);
+            setExpiration(std::chrono::system_clock::time_point(duration));
         }
         
         // 重置缓存

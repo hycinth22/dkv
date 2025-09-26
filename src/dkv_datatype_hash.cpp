@@ -28,8 +28,8 @@ std::string HashItem::serialize() const {
         oss << pair.second.length() << ":" << pair.second << ":";
     }
     
-    if (has_expiration_) {
-        auto duration = expire_time_.time_since_epoch();
+    if (hasExpiration()) {
+        auto duration = expire_time_.load().time_since_epoch();
         auto seconds = std::chrono::duration_cast<std::chrono::seconds>(duration).count();
         oss << "E:" << seconds;
     }
@@ -65,7 +65,7 @@ void HashItem::deserialize(const std::string& data) {
             if (next_part.substr(0, 2) == "E:") {
                 int64_t seconds = std::stoll(next_part.substr(2));
                 expire_time_ = Timestamp(std::chrono::seconds(seconds));
-                has_expiration_ = true;
+                setExpiration(expire_time_);
             }
         }
     }

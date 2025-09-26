@@ -22,8 +22,8 @@ DataType StringItem::getType() const {
 std::string StringItem::serialize() const {
     std::ostringstream oss;
     oss << "STRING:" << value_.length() << ":" << value_;
-    if (has_expiration_) {
-        auto duration = expire_time_.time_since_epoch();
+    if (hasExpiration()) {
+        auto duration = expire_time_.load().time_since_epoch();
         auto seconds = std::chrono::duration_cast<std::chrono::seconds>(duration).count();
         oss << ":" << seconds;
     }
@@ -45,10 +45,7 @@ void StringItem::deserialize(const std::string& data) {
         std::string expire_str;
         if (std::getline(iss, expire_str)) {
             int64_t seconds = std::stoll(expire_str);
-            expire_time_ = Timestamp(std::chrono::seconds(seconds));
-            has_expiration_ = true;
-        } else {
-            has_expiration_ = false;
+            setExpiration(Timestamp(std::chrono::seconds(seconds)));
         }
     }
 }
