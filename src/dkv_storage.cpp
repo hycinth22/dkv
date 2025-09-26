@@ -271,6 +271,54 @@ void StorageEngine::cleanupExpiredKeys() {
     }
 }
 
+void StorageEngine::cleanupEmptyKey() {
+    auto writelock = wlock();
+    
+    auto it = data_.begin();
+    while (it != data_.end()) {
+        HashItem* hash_item = dynamic_cast<HashItem*>(it->second.get());
+        if (hash_item) {
+            if (hash_item->size() == 0) {
+                it = data_.erase(it);
+                total_keys_--;
+            } else {
+                ++it;
+            }
+            continue;
+        }
+        ListItem* list_item = dynamic_cast<ListItem*>(it->second.get());
+        if (list_item) {
+            if (list_item->empty()) {
+                it = data_.erase(it);
+                total_keys_--;
+            } else {
+                ++it;
+            }
+            continue;
+        }
+        SetItem* set_item = dynamic_cast<SetItem*>(it->second.get());
+        if (set_item) {
+            if (set_item->empty()) {
+                it = data_.erase(it);
+                total_keys_--;
+            } else {
+                ++it;
+            }
+            continue;
+        }
+        ZSetItem* zset_item = dynamic_cast<ZSetItem*>(it->second.get());
+        if (zset_item) {
+            if (zset_item->empty()) {
+                it = data_.erase(it);
+                total_keys_--;
+            } else {
+                ++it;
+            }
+            continue;
+        }
+    }
+}
+
 // 保存数据到RDB文件
 bool StorageEngine::saveRDB(const std::string& filename) {
     RDBPersistence rdb;
@@ -438,13 +486,6 @@ bool StorageEngine::hdel(const Key& key, const Value& field) {
     }
     
     bool result = hash_item->delField(field);
-    
-    // 如果哈希为空，删除整个键
-    if (hash_item->size() == 0) {
-        data_.erase(it);
-        total_keys_--;
-    }
-    
     return result;
 }
 
@@ -600,14 +641,7 @@ std::string StorageEngine::lpop(const Key& key) {
         // 更新访问时间和频率
         list_item->touch();
         list_item->incrementFrequency();
-        
-        // 如果列表为空，删除整个键
-        if (list_item->empty()) {
-            keylock.unlock();
-            auto writelock = wlock();
-            data_.erase(it);
-            total_keys_--;
-        }
+
         return value;
     }
     
@@ -633,14 +667,6 @@ std::string StorageEngine::rpop(const Key& key) {
         // 更新访问时间和频率
         list_item->touch();
         list_item->incrementFrequency();
-        
-        // 如果列表为空，删除整个键
-        if (list_item->empty()) {
-            keylock.unlock();
-            auto writelock = wlock();
-            data_.erase(it);
-            total_keys_--;
-        }
         return value;
     }
     
@@ -786,13 +812,7 @@ size_t StorageEngine::srem(const Key& key, const std::vector<Value>& members) {
     // 删除多个元素并返回成功删除的个数
     auto keylock = it->second->lock();
     size_t removed_count = set_item->srem(members);
-    
-    // 如果集合为空，删除整个键
-    if (set_item->empty()) {
-        data_.erase(it);
-        total_keys_--;
-    }
-    
+
     return removed_count;
 }
 
@@ -927,16 +947,6 @@ size_t StorageEngine::zrem(const Key& key, const std::vector<Value>& members) {
     // 删除多个元素并返回成功删除的个数
     auto keylock = it->second->lock();
     size_t removed_count = zset_item->zrem(members);
-    
-    // 如果集合为空，删除整个键
-    if (zset_item->empty()) {
-        keylock.unlock();
-        readlock.unlock();
-        writelock.lock();
-        data_.erase(it);
-        total_keys_--;
-    }
-    
     return removed_count;
 }
 

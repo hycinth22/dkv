@@ -680,6 +680,7 @@ void DKVServer::cleanupExpiredKeys() {
         
         if (cleanup_running_ && storage_engine_) {
             storage_engine_->cleanupExpiredKeys();
+            storage_engine_->cleanupEmptyKey();
         }
     }
 }

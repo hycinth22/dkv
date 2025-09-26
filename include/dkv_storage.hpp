@@ -64,8 +64,9 @@ public:
     uint64_t getTotalKeys() const;
     uint64_t getExpiredKeys() const;
     
-    // 清理过期键
+    // 清理过期键和空键
     void cleanupExpiredKeys();
+    void cleanupEmptyKey();
     
     // RDB持久化
     bool saveRDB(const std::string& filename);
