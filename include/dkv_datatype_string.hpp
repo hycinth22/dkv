@@ -8,8 +8,6 @@ namespace dkv {
 class StringItem : public DataItem {
 private:
     Value value_;
-    Timestamp expire_time_;
-    bool has_expiration_;
 
 public:
     explicit StringItem(const Value& value = "");

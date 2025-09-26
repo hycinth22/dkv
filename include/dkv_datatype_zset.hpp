@@ -18,9 +18,6 @@ private:
     std::map<double, std::unordered_set<Value>> elements_by_score_;
     // 使用unordered_map快速查找元素的分数
     std::unordered_map<Value, double> scores_;
-    
-    Timestamp expire_time_;
-    bool has_expiration_;
 
 public:
     ZSetItem();

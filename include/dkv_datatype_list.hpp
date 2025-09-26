@@ -12,8 +12,6 @@ namespace dkv {
 class ListItem : public DataItem {
 private:
     std::list<Value> elements_;  // 链表
-    Timestamp expire_time_;
-    bool has_expiration_;
 
 public:
     ListItem();

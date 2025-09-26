@@ -16,9 +16,6 @@ private:
     // 存储基数估计值的缓存
     mutable uint64_t cardinality_; 
     mutable bool cache_valid_; 
-    
-    Timestamp expire_time_;
-    bool has_expiration_;
 
     // HyperLogLog参数
     static constexpr uint8_t kPrecision = 14; // 精度参数

@@ -10,8 +10,6 @@ namespace dkv {
 class HashItem : public DataItem {
 private:
     std::unordered_map<Value, Value> fields_;  // 字段-值映射
-    Timestamp expire_time_;
-    bool has_expiration_;
 
 public:
     HashItem();

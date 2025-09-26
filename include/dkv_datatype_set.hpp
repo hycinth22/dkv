@@ -12,8 +12,6 @@ namespace dkv {
 class SetItem : public DataItem {
 private:
     std::unordered_set<Value> elements_;  // 集合元素
-    Timestamp expire_time_;
-    bool has_expiration_;
 
 public:
     SetItem();
