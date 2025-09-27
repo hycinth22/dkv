@@ -246,13 +246,6 @@ private:
     std::unique_ptr<DataItem> createBitmapItem(Timestamp expire_time);
     std::unique_ptr<DataItem> createHyperLogLogItem();
     std::unique_ptr<DataItem> createHyperLogLogItem(Timestamp expire_time);
-
-    // 锁操作方法
-    std::unique_lock<std::shared_mutex> wlock() const;
-    std::shared_lock<std::shared_mutex> rlock() const;
-    std::unique_lock<std::shared_mutex> wlock_deferred() const;
-    std::shared_lock<std::shared_mutex> rlock_deferred() const;
-    std::shared_mutex& getMutex() const;
 };
 
 // 数据项工厂

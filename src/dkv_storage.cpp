@@ -397,7 +397,7 @@ std::unique_ptr<DataItem> StorageEngine::createBitmapItem(Timestamp expire_time)
 
 bool StorageEngine::hset(const Key& key, const Value& field, const Value& value) {
     auto readlock = inner_storage_.rlock();
-    auto writelock = wlock_deferred();
+    auto writelock = inner_storage_.wlock_deferred();
     HashItem* hash_item = nullptr;
     auto it = inner_storage_.find(key);
     if (it == inner_storage_.end() || it->second->isExpired()) {
@@ -567,7 +567,7 @@ size_t StorageEngine::hlen(const Key& key) {
 
 size_t StorageEngine::lpush(const Key& key, const Value& value) {
     auto readlock = inner_storage_.rlock();
-    auto writelock = wlock_deferred();
+    auto writelock = inner_storage_.wlock_deferred();
     
     auto it = inner_storage_.find(key);
     ListItem* list_item = nullptr;
@@ -596,7 +596,7 @@ size_t StorageEngine::lpush(const Key& key, const Value& value) {
 
 size_t StorageEngine::rpush(const Key& key, const Value& value) {
     auto readlock = inner_storage_.rlock();
-    auto writelock = wlock_deferred();
+    auto writelock = inner_storage_.wlock_deferred();
     
     auto it = inner_storage_.find(key);
     ListItem* list_item = nullptr;
@@ -769,7 +769,7 @@ std::unique_ptr<DataItem> DataItemFactory::create(DataType type, const std::stri
 
 size_t StorageEngine::sadd(const Key& key, const std::vector<Value>& members) {
     auto readlock = inner_storage_.rlock();
-    auto writelock = wlock_deferred();
+    auto writelock = inner_storage_.wlock_deferred();
     auto it = inner_storage_.find(key);
     SetItem* set_item = nullptr;
     
@@ -796,7 +796,7 @@ size_t StorageEngine::sadd(const Key& key, const std::vector<Value>& members) {
 
 size_t StorageEngine::srem(const Key& key, const std::vector<Value>& members) {
     auto readlock = inner_storage_.rlock();
-    auto writelock = wlock_deferred();
+    auto writelock = inner_storage_.wlock_deferred();
 
     auto it = inner_storage_.find(key);
     if (it == inner_storage_.end() || it->second->isExpired()) {
@@ -902,7 +902,7 @@ void StorageEngine::setDataItem(const Key& key, std::unique_ptr<DataItem> item) 
 
 size_t StorageEngine::zadd(const Key& key, const std::vector<std::pair<Value, double>>& members_with_scores) {
     auto readlock = inner_storage_.rlock();
-    auto writelock = wlock_deferred();
+    auto writelock = inner_storage_.wlock_deferred();
     
     auto it = inner_storage_.find(key);
     ZSetItem* zset_item = nullptr;
@@ -931,7 +931,7 @@ size_t StorageEngine::zadd(const Key& key, const std::vector<std::pair<Value, do
 
 size_t StorageEngine::zrem(const Key& key, const std::vector<Value>& members) {
     auto readlock = inner_storage_.rlock();
-    auto writelock = wlock_deferred();
+    auto writelock = inner_storage_.wlock_deferred();
     
     auto it = inner_storage_.find(key);
     if (it == inner_storage_.end() || it->second->isExpired()) {
@@ -1145,7 +1145,7 @@ size_t StorageEngine::zcard(const Key& key) {
 // 位图操作实现
 bool StorageEngine::setBit(const Key& key, size_t offset, bool value) {
     auto readlock = inner_storage_.rlock();
-    auto writelock = wlock_deferred();
+    auto writelock = inner_storage_.wlock_deferred();
     auto it = inner_storage_.find(key);
     BitmapItem* bitmap_item = nullptr;
     if (it == inner_storage_.end() || it->second->isExpired()) {
