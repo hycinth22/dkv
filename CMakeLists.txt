@@ -20,6 +20,9 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 # 查找线程库
 find_package(Threads REQUIRED)
 
+# 查找Google Benchmark库
+find_package(benchmark)
+
 # 创建DKV库
 file(GLOB_RECURSE DKV_SOURCES "src/*.cpp")
 include_directories(include)
@@ -94,6 +97,13 @@ add_test(NAME aof_tests COMMAND test_aof)
 add_test(NAME concurrency_tests COMMAND test_concurrency)
 add_test(NAME storage_mvcc_tests COMMAND test_storage_mvcc)
 
+# benchmark tests
+if(benchmark_FOUND)
+    add_executable(benchmark_hello tests/benchmark_hello.cpp)
+    target_link_libraries(benchmark_hello dkv_lib pthread)
+    target_link_libraries(benchmark_hello benchmark::benchmark)
+    add_test(NAME benchmark_hello COMMAND benchmark_hello)
+endif()
 
 # 安装规则
 install(TARGETS dkv_server DESTINATION bin)
