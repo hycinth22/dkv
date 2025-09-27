@@ -7,32 +7,32 @@
 namespace dkv {
 
 // 锁操作方法
-std::unique_lock<std::shared_mutex> StorageEngine::wlock() const{
+std::unique_lock<std::shared_mutex> InnerStorage::wlock() const{
     return std::unique_lock<std::shared_mutex>(mutex_);
 }
 
-std::shared_lock<std::shared_mutex> StorageEngine::rlock() const {
+std::shared_lock<std::shared_mutex> InnerStorage::rlock() const {
     return std::shared_lock<std::shared_mutex>(mutex_);
 }
 
-std::shared_mutex& StorageEngine::getMutex() const {
+std::shared_mutex& InnerStorage::getMutex() const {
     return mutex_;
 }
 
-std::unique_lock<std::shared_mutex> StorageEngine::wlock_deferred() const {
+std::unique_lock<std::shared_mutex> InnerStorage::wlock_deferred() const {
     return std::unique_lock<std::shared_mutex>(mutex_, std::defer_lock);
 }
 
-std::shared_lock<std::shared_mutex> StorageEngine::rlock_deferred() const {
+std::shared_lock<std::shared_mutex> InnerStorage::rlock_deferred() const {
     return std::shared_lock<std::shared_mutex>(mutex_, std::defer_lock);
 }
 
 // StorageEngine 实现
 bool StorageEngine::set(const Key& key, const Value& value) {
-    auto readlock = rlock();
+    auto readlock = inner_storage_.rlock();
     // 检查键是否已存在且未过期
-    auto it = data_.find(key);
-    if (it != data_.end() && !it->second->isExpired()) {
+    auto it = inner_storage_.find(key);
+    if (it != inner_storage_.end() && !it->second->isExpired()) {
         auto keylock = it->second->lock();
         // 更新现有值
         auto* string_item = dynamic_cast<StringItem*>(it->second.get());
@@ -42,22 +42,22 @@ bool StorageEngine::set(const Key& key, const Value& value) {
         }
     }
     readlock.unlock();
-    auto writelock = wlock();
+    auto writelock = inner_storage_.wlock();
     // 创建新的字符串项
-    data_[key] = createStringItem(value);
+    inner_storage_[key] = createStringItem(value);
     total_keys_++;
     return true;
 }
 
 bool StorageEngine::set(const Key& key, const Value& value, int64_t expire_seconds) {
-    auto readlock = rlock();
+    auto readlock = inner_storage_.rlock();
     
     // 计算过期时间
     auto expire_time = Utils::getCurrentTime() + std::chrono::seconds(expire_seconds);
     
     // 检查键是否已存在且未过期
-    auto it = data_.find(key);
-    if (it != data_.end() && !it->second->isExpired()) {
+    auto it = inner_storage_.find(key);
+    if (it != inner_storage_.end() && !it->second->isExpired()) {
         auto keylock = it->second->lock();
         // 更新现有值
         auto* string_item = dynamic_cast<StringItem*>(it->second.get());
@@ -70,17 +70,17 @@ bool StorageEngine::set(const Key& key, const Value& value, int64_t expire_secon
     
     // 创建新的字符串项
     readlock.unlock();
-    auto writelock = wlock();
-    data_[key] = createStringItem(value, expire_time);
+    auto writelock = inner_storage_.wlock();
+    inner_storage_[key] = createStringItem(value, expire_time);
     total_keys_++;
     return true;
 }
 
 std::string StorageEngine::get(const Key& key) {
-    auto readlock = rlock();
+    auto readlock = inner_storage_.rlock();
     
-    auto it = data_.find(key);
-    if (it == data_.end() || it->second->isExpired()) {
+    auto it = inner_storage_.find(key);
+    if (it == inner_storage_.end() || it->second->isExpired()) {
         return "";
     }
     auto keylock = it->second->rlock();
@@ -97,11 +97,11 @@ std::string StorageEngine::get(const Key& key) {
 }
 
 bool StorageEngine::del(const Key& key) {
-    auto writelock = wlock();
+    auto writelock = inner_storage_.wlock();
     
-    auto it = data_.find(key);
-    if (it != data_.end()) {
-        data_.erase(it);
+    auto it = inner_storage_.find(key);
+    if (it != inner_storage_.end()) {
+        inner_storage_.erase(it);
         total_keys_--;
         return true;
     }
@@ -110,10 +110,10 @@ bool StorageEngine::del(const Key& key) {
 }
 
 bool StorageEngine::exists(const Key& key) {
-    auto readlock = rlock();
+    auto readlock = inner_storage_.rlock();
     
-    auto it = data_.find(key);
-    if (it != data_.end() && !it->second->isExpired()) {
+    auto it = inner_storage_.find(key);
+    if (it != inner_storage_.end() && !it->second->isExpired()) {
         // 更新访问时间和频率
         DataItem* item = it->second.get();
         item->touch();
@@ -124,10 +124,10 @@ bool StorageEngine::exists(const Key& key) {
 }
 
 bool StorageEngine::expire(const Key& key, int64_t seconds) {
-    auto readlock = rlock();
+    auto readlock = inner_storage_.rlock();
     
-    auto it = data_.find(key);
-    if (it == data_.end() || it->second->isExpired()) {
+    auto it = inner_storage_.find(key);
+    if (it == inner_storage_.end() || it->second->isExpired()) {
         return false;
     }
     auto keylock = it->second->lock();
@@ -143,10 +143,10 @@ bool StorageEngine::expire(const Key& key, int64_t seconds) {
 }
 
 int64_t StorageEngine::ttl(const Key& key) {
-    auto readlock = rlock();
+    auto readlock = inner_storage_.rlock();
     
-    auto it = data_.find(key);
-    if (it == data_.end() || it->second->isExpired()) {
+    auto it = inner_storage_.find(key);
+    if (it == inner_storage_.end() || it->second->isExpired()) {
         return -2; // 键不存在
     }
     auto keylock = it->second->rlock();
@@ -163,10 +163,10 @@ int64_t StorageEngine::ttl(const Key& key) {
 }
 
 int64_t StorageEngine::incr(const Key& key) {
-    auto readlock = rlock();
+    auto readlock = inner_storage_.rlock();
     
-    auto it = data_.find(key);
-    if (it != data_.end() && !it->second->isExpired()) {
+    auto it = inner_storage_.find(key);
+    if (it != inner_storage_.end() && !it->second->isExpired()) {
         auto keylock = it->second->lock();
         auto* string_item = dynamic_cast<StringItem*>(it->second.get());
         if (string_item) {
@@ -180,17 +180,17 @@ int64_t StorageEngine::incr(const Key& key) {
     }
     // 键不存在或不是数字，设置为1
     readlock.unlock();
-    auto writelock = wlock();
-    data_[key] = createStringItem("1");
+    auto writelock = inner_storage_.wlock();
+    inner_storage_[key] = createStringItem("1");
     total_keys_++;
     return 1;
 }
 
 int64_t StorageEngine::decr(const Key& key) {
-    auto readlock = rlock();
+    auto readlock = inner_storage_.rlock();
     
-    auto it = data_.find(key);
-    if (it != data_.end() && !it->second->isExpired()) {
+    auto it = inner_storage_.find(key);
+    if (it != inner_storage_.end() && !it->second->isExpired()) {
         auto keylock = it->second->lock();
         auto* string_item = dynamic_cast<StringItem*>(it->second.get());
         if (string_item) {
@@ -205,30 +205,30 @@ int64_t StorageEngine::decr(const Key& key) {
     
     // 键不存在或不是数字，设置为-1
     readlock.unlock();
-    auto writelock = wlock();
-    data_[key] = createStringItem("-1");
+    auto writelock = inner_storage_.wlock();
+    inner_storage_[key] = createStringItem("-1");
     total_keys_++;
     return -1;
 }
 
 void StorageEngine::flush() {
-    auto writelock = wlock();
-    data_.clear();
+    auto writelock = inner_storage_.wlock();
+    inner_storage_.clear();
     total_keys_ = 0;
     expired_keys_ = 0;
 }
 
 size_t StorageEngine::size() const {
-    auto readlock = rlock();
-    return data_.size();
+    auto readlock = inner_storage_.rlock();
+    return inner_storage_.size();
 }
 
 std::vector<Key> StorageEngine::keys() const {
-    auto readlock = rlock();
+    auto readlock = inner_storage_.rlock();
     std::vector<Key> result;
-    result.reserve(data_.size());
+    result.reserve(inner_storage_.size());
     
-    for (const auto& pair : data_) {
+    for (const auto& pair : inner_storage_) {
         if (!isKeyExpired(pair.first)) {
             result.push_back(pair.first);
         }
@@ -258,12 +258,12 @@ std::string StorageEngine::getMemoryStats() const {
 }
 
 void StorageEngine::cleanupExpiredKeys() {
-    auto writelock = wlock();
+    auto writelock = inner_storage_.wlock();
     
-    auto it = data_.begin();
-    while (it != data_.end()) {
+    auto it = inner_storage_.begin();
+    while (it != inner_storage_.end()) {
         if (it->second->isExpired()) {
-            it = data_.erase(it);
+            it = inner_storage_.erase(it);
             expired_keys_++;
         } else {
             ++it;
@@ -272,14 +272,14 @@ void StorageEngine::cleanupExpiredKeys() {
 }
 
 void StorageEngine::cleanupEmptyKey() {
-    auto writelock = wlock();
+    auto writelock = inner_storage_.wlock();
     
-    auto it = data_.begin();
-    while (it != data_.end()) {
+    auto it = inner_storage_.begin();
+    while (it != inner_storage_.end()) {
         HashItem* hash_item = dynamic_cast<HashItem*>(it->second.get());
         if (hash_item) {
             if (hash_item->size() == 0) {
-                it = data_.erase(it);
+                it = inner_storage_.erase(it);
                 total_keys_--;
             } else {
                 ++it;
@@ -289,7 +289,7 @@ void StorageEngine::cleanupEmptyKey() {
         ListItem* list_item = dynamic_cast<ListItem*>(it->second.get());
         if (list_item) {
             if (list_item->empty()) {
-                it = data_.erase(it);
+                it = inner_storage_.erase(it);
                 total_keys_--;
             } else {
                 ++it;
@@ -299,7 +299,7 @@ void StorageEngine::cleanupEmptyKey() {
         SetItem* set_item = dynamic_cast<SetItem*>(it->second.get());
         if (set_item) {
             if (set_item->empty()) {
-                it = data_.erase(it);
+                it = inner_storage_.erase(it);
                 total_keys_--;
             } else {
                 ++it;
@@ -309,7 +309,7 @@ void StorageEngine::cleanupEmptyKey() {
         ZSetItem* zset_item = dynamic_cast<ZSetItem*>(it->second.get());
         if (zset_item) {
             if (zset_item->empty()) {
-                it = data_.erase(it);
+                it = inner_storage_.erase(it);
                 total_keys_--;
             } else {
                 ++it;
@@ -332,17 +332,17 @@ bool StorageEngine::loadRDB(const std::string& filename) {
 }
 
 bool StorageEngine::isKeyExpired(const Key& key) const {
-    auto it = data_.find(key);
-    if (it == data_.end()) {
+    auto it = inner_storage_.find(key);
+    if (it == inner_storage_.end()) {
         return false;
     }
     return it->second->isExpired();
 }
 
 void StorageEngine::removeExpiredKey(const Key& key) {
-    auto it = data_.find(key);
-    if (it != data_.end()) {
-        data_.erase(it);
+    auto it = inner_storage_.find(key);
+    if (it != inner_storage_.end()) {
+        inner_storage_.erase(it);
         expired_keys_++;
     }
 }
@@ -396,22 +396,22 @@ std::unique_ptr<DataItem> StorageEngine::createBitmapItem(Timestamp expire_time)
 }
 
 bool StorageEngine::hset(const Key& key, const Value& field, const Value& value) {
-    auto readlock = rlock();
+    auto readlock = inner_storage_.rlock();
     auto writelock = wlock_deferred();
     HashItem* hash_item = nullptr;
-    auto it = data_.find(key);
-    if (it == data_.end() || it->second->isExpired()) {
+    auto it = inner_storage_.find(key);
+    if (it == inner_storage_.end() || it->second->isExpired()) {
         readlock.unlock();
         writelock.lock();
-        it = data_.find(key);
-        if (it == data_.end() || it->second->isExpired()) {
-            auto is_newkey = (it == data_.end());
+        it = inner_storage_.find(key);
+        if (it == inner_storage_.end() || it->second->isExpired()) {
+            auto is_newkey = (it == inner_storage_.end());
             // 创建新的哈希项
             auto new_item = createHashItem();
             hash_item = dynamic_cast<HashItem*>(new_item.get());
             assert(hash_item != nullptr);
-            it = data_.insert_or_assign(key, std::move(new_item)).first;
-            it = data_.find(key);
+            it = inner_storage_.insert_or_assign(key, std::move(new_item)).first;
+            it = inner_storage_.find(key);
             if (is_newkey) {
                 total_keys_++;
             }
@@ -427,10 +427,10 @@ bool StorageEngine::hset(const Key& key, const Value& field, const Value& value)
 }
 
 std::string StorageEngine::hget(const Key& key, const Value& field) {
-    auto readlock = rlock();
+    auto readlock = inner_storage_.rlock();
     
-    auto it = data_.find(key);
-    if (it == data_.end() || it->second->isExpired()) {
+    auto it = inner_storage_.find(key);
+    if (it == inner_storage_.end() || it->second->isExpired()) {
         return "";
     }
     auto keylock = it->second->rlock();
@@ -451,10 +451,10 @@ std::string StorageEngine::hget(const Key& key, const Value& field) {
 }
 
 std::vector<std::pair<Value, Value>> StorageEngine::hgetall(const Key& key) {
-    auto readlock = rlock();
+    auto readlock = inner_storage_.rlock();
     
-    auto it = data_.find(key);
-    if (it == data_.end() || it->second->isExpired()) {
+    auto it = inner_storage_.find(key);
+    if (it == inner_storage_.end() || it->second->isExpired()) {
         return {};
     }
     auto keylock = it->second->rlock();
@@ -472,10 +472,10 @@ std::vector<std::pair<Value, Value>> StorageEngine::hgetall(const Key& key) {
 }
 
 bool StorageEngine::hdel(const Key& key, const Value& field) {
-    auto readlock = rlock();
+    auto readlock = inner_storage_.rlock();
     
-    auto it = data_.find(key);
-    if (it == data_.end() || it->second->isExpired()) {
+    auto it = inner_storage_.find(key);
+    if (it == inner_storage_.end() || it->second->isExpired()) {
         return false;
     }
     auto keylock = it->second->lock();
@@ -490,10 +490,10 @@ bool StorageEngine::hdel(const Key& key, const Value& field) {
 }
 
 bool StorageEngine::hexists(const Key& key, const Value& field) {
-    auto readlock = rlock();
+    auto readlock = inner_storage_.rlock();
     
-    auto it = data_.find(key);
-    if (it == data_.end() || it->second->isExpired()) {
+    auto it = inner_storage_.find(key);
+    if (it == inner_storage_.end() || it->second->isExpired()) {
         return false;
     }
     auto keylock = it->second->rlock();
@@ -507,10 +507,10 @@ bool StorageEngine::hexists(const Key& key, const Value& field) {
 }
 
 std::vector<Value> StorageEngine::hkeys(const Key& key) {
-    auto readlock = rlock();
+    auto readlock = inner_storage_.rlock();
     
-    auto it = data_.find(key);
-    if (it == data_.end() || it->second->isExpired()) {
+    auto it = inner_storage_.find(key);
+    if (it == inner_storage_.end() || it->second->isExpired()) {
         return {};
     }
     auto keylock = it->second->rlock();
@@ -528,10 +528,10 @@ std::vector<Value> StorageEngine::hkeys(const Key& key) {
 }
 
 std::vector<Value> StorageEngine::hvals(const Key& key) {
-    auto readlock = rlock();
+    auto readlock = inner_storage_.rlock();
     
-    auto it = data_.find(key);
-    if (it == data_.end() || it->second->isExpired()) {
+    auto it = inner_storage_.find(key);
+    if (it == inner_storage_.end() || it->second->isExpired()) {
         return {};
     }
     auto keylock = it->second->rlock();
@@ -549,10 +549,10 @@ std::vector<Value> StorageEngine::hvals(const Key& key) {
 }
 
 size_t StorageEngine::hlen(const Key& key) {
-    auto readlock = rlock();
+    auto readlock = inner_storage_.rlock();
     
-    auto it = data_.find(key);
-    if (it == data_.end() || it->second->isExpired()) {
+    auto it = inner_storage_.find(key);
+    if (it == inner_storage_.end() || it->second->isExpired()) {
         return 0;
     }
     auto keylock = it->second->rlock();
@@ -566,18 +566,18 @@ size_t StorageEngine::hlen(const Key& key) {
 }
 
 size_t StorageEngine::lpush(const Key& key, const Value& value) {
-    auto readlock = rlock();
+    auto readlock = inner_storage_.rlock();
     auto writelock = wlock_deferred();
     
-    auto it = data_.find(key);
+    auto it = inner_storage_.find(key);
     ListItem* list_item = nullptr;
     
-    if (it == data_.end() || it->second->isExpired()) {
-        bool is_newkey = (it == data_.end());
+    if (it == inner_storage_.end() || it->second->isExpired()) {
+        bool is_newkey = (it == inner_storage_.end());
         // 创建新的列表项
         readlock.unlock();
         writelock.lock();
-        it = data_.insert_or_assign(key, createListItem()).first;
+        it = inner_storage_.insert_or_assign(key, createListItem()).first;
         
         list_item = dynamic_cast<ListItem*>(it->second.get());
         if (is_newkey) {
@@ -595,18 +595,18 @@ size_t StorageEngine::lpush(const Key& key, const Value& value) {
 }
 
 size_t StorageEngine::rpush(const Key& key, const Value& value) {
-    auto readlock = rlock();
+    auto readlock = inner_storage_.rlock();
     auto writelock = wlock_deferred();
     
-    auto it = data_.find(key);
+    auto it = inner_storage_.find(key);
     ListItem* list_item = nullptr;
     
-    if (it == data_.end() || it->second->isExpired()) {
-        bool is_newkey = (it == data_.end());
+    if (it == inner_storage_.end() || it->second->isExpired()) {
+        bool is_newkey = (it == inner_storage_.end());
         // 创建新的列表项
         readlock.unlock();
         writelock.lock();
-        it = data_.insert_or_assign(key, createListItem()).first;
+        it = inner_storage_.insert_or_assign(key, createListItem()).first;
         list_item = dynamic_cast<ListItem*>(it->second.get());
         if (is_newkey) {
             total_keys_++;
@@ -623,10 +623,10 @@ size_t StorageEngine::rpush(const Key& key, const Value& value) {
 }
 
 std::string StorageEngine::lpop(const Key& key) {
-    auto readlock = rlock();
+    auto readlock = inner_storage_.rlock();
     
-    auto it = data_.find(key);
-    if (it == data_.end() || it->second->isExpired()) {
+    auto it = inner_storage_.find(key);
+    if (it == inner_storage_.end() || it->second->isExpired()) {
         return "";
     }
     
@@ -649,10 +649,10 @@ std::string StorageEngine::lpop(const Key& key) {
 }
 
 std::string StorageEngine::rpop(const Key& key) {
-    auto readlock = rlock();
+    auto readlock = inner_storage_.rlock();
     
-    auto it = data_.find(key);
-    if (it == data_.end() || it->second->isExpired()) {
+    auto it = inner_storage_.find(key);
+    if (it == inner_storage_.end() || it->second->isExpired()) {
         return "";
     }
     
@@ -674,10 +674,10 @@ std::string StorageEngine::rpop(const Key& key) {
 }
 
 size_t StorageEngine::llen(const Key& key) {
-    auto readlock = rlock();
+    auto readlock = inner_storage_.rlock();
     
-    auto it = data_.find(key);
-    if (it == data_.end() || it->second->isExpired()) {
+    auto it = inner_storage_.find(key);
+    if (it == inner_storage_.end() || it->second->isExpired()) {
         return 0;
     }
     
@@ -694,10 +694,10 @@ size_t StorageEngine::llen(const Key& key) {
 }
 
 std::vector<Value> StorageEngine::lrange(const Key& key, size_t start, size_t stop) {
-    auto readlock = rlock();
+    auto readlock = inner_storage_.rlock();
     
-    auto it = data_.find(key);
-    if (it == data_.end() || it->second->isExpired()) {
+    auto it = inner_storage_.find(key);
+    if (it == inner_storage_.end() || it->second->isExpired()) {
         return {};
     }
     
@@ -768,19 +768,19 @@ std::unique_ptr<DataItem> DataItemFactory::create(DataType type, const std::stri
 }
 
 size_t StorageEngine::sadd(const Key& key, const std::vector<Value>& members) {
-    auto readlock = rlock();
+    auto readlock = inner_storage_.rlock();
     auto writelock = wlock_deferred();
-    auto it = data_.find(key);
+    auto it = inner_storage_.find(key);
     SetItem* set_item = nullptr;
     
-    if (it == data_.end() || it->second->isExpired()) {
+    if (it == inner_storage_.end() || it->second->isExpired()) {
         readlock.unlock();
         writelock.lock();
-        it = data_.find(key);
-        if (it == data_.end() || it->second->isExpired()) {
+        it = inner_storage_.find(key);
+        if (it == inner_storage_.end() || it->second->isExpired()) {
             // 创建新的集合项
-            it = data_.insert_or_assign(key, createSetItem()).first;
-            set_item = dynamic_cast<SetItem*>(data_[key].get());
+            it = inner_storage_.insert_or_assign(key, createSetItem()).first;
+            set_item = dynamic_cast<SetItem*>(inner_storage_[key].get());
             total_keys_++;
         }
     }
@@ -795,11 +795,11 @@ size_t StorageEngine::sadd(const Key& key, const std::vector<Value>& members) {
 }
 
 size_t StorageEngine::srem(const Key& key, const std::vector<Value>& members) {
-    auto readlock = rlock();
+    auto readlock = inner_storage_.rlock();
     auto writelock = wlock_deferred();
 
-    auto it = data_.find(key);
-    if (it == data_.end() || it->second->isExpired()) {
+    auto it = inner_storage_.find(key);
+    if (it == inner_storage_.end() || it->second->isExpired()) {
         return 0; // 键不存在
     }
     
@@ -817,10 +817,10 @@ size_t StorageEngine::srem(const Key& key, const std::vector<Value>& members) {
 }
 
 std::vector<Value> StorageEngine::smembers(const Key& key) {
-    auto readlock = rlock();
+    auto readlock = inner_storage_.rlock();
     
-    auto it = data_.find(key);
-    if (it == data_.end() || it->second->isExpired()) {
+    auto it = inner_storage_.find(key);
+    if (it == inner_storage_.end() || it->second->isExpired()) {
         return {};
     }
     
@@ -837,10 +837,10 @@ std::vector<Value> StorageEngine::smembers(const Key& key) {
 }
 
 bool StorageEngine::sismember(const Key& key, const Value& member) {
-    auto readlock = rlock();
+    auto readlock = inner_storage_.rlock();
     
-    auto it = data_.find(key);
-    if (it == data_.end() || it->second->isExpired()) {
+    auto it = inner_storage_.find(key);
+    if (it == inner_storage_.end() || it->second->isExpired()) {
         return false;
     }
     
@@ -857,10 +857,10 @@ bool StorageEngine::sismember(const Key& key, const Value& member) {
 }
 
 size_t StorageEngine::scard(const Key& key) {
-    auto readlock = rlock();
+    auto readlock = inner_storage_.rlock();
     
-    auto it = data_.find(key);
-    if (it == data_.end() || it->second->isExpired()) {
+    auto it = inner_storage_.find(key);
+    if (it == inner_storage_.end() || it->second->isExpired()) {
         return 0;
     }
     
@@ -877,10 +877,10 @@ size_t StorageEngine::scard(const Key& key) {
 }
 
 DataItem* StorageEngine::getDataItem(const Key& key) {
-    auto readlock = rlock();
+    auto readlock = inner_storage_.rlock();
     
-    auto it = data_.find(key);
-    if (it == data_.end() || it->second->isExpired()) {
+    auto it = inner_storage_.find(key);
+    if (it == inner_storage_.end() || it->second->isExpired()) {
         return nullptr;
     }
     auto keylock = it->second->rlock();
@@ -889,32 +889,32 @@ DataItem* StorageEngine::getDataItem(const Key& key) {
 
 void StorageEngine::setDataItem(const Key& key, std::unique_ptr<DataItem> item) {
     assert(item.get());
-    auto writelock = wlock();
+    auto writelock = inner_storage_.wlock();
 
-    auto it = data_.find(key);
-    if (it == data_.end()) {
+    auto it = inner_storage_.find(key);
+    if (it == inner_storage_.end()) {
         // 新键
         total_keys_++;
     }
     // 更新现有键
-    it = data_.insert_or_assign(key, std::move(item)).first;
+    it = inner_storage_.insert_or_assign(key, std::move(item)).first;
 }
 
 size_t StorageEngine::zadd(const Key& key, const std::vector<std::pair<Value, double>>& members_with_scores) {
-    auto readlock = rlock();
+    auto readlock = inner_storage_.rlock();
     auto writelock = wlock_deferred();
     
-    auto it = data_.find(key);
+    auto it = inner_storage_.find(key);
     ZSetItem* zset_item = nullptr;
     
-    if (it == data_.end() || it->second->isExpired()) {
+    if (it == inner_storage_.end() || it->second->isExpired()) {
         readlock.unlock();
         writelock.lock();
-        it = data_.find(key);
-        if (it == data_.end()) {
+        it = inner_storage_.find(key);
+        if (it == inner_storage_.end()) {
             // 创建新的有序集合项
-            it = data_.insert_or_assign(key, createZSetItem()).first;
-            zset_item = dynamic_cast<ZSetItem*>(data_[key].get());
+            it = inner_storage_.insert_or_assign(key, createZSetItem()).first;
+            zset_item = dynamic_cast<ZSetItem*>(inner_storage_[key].get());
             total_keys_++;
         }
     }
@@ -930,11 +930,11 @@ size_t StorageEngine::zadd(const Key& key, const std::vector<std::pair<Value, do
 }
 
 size_t StorageEngine::zrem(const Key& key, const std::vector<Value>& members) {
-    auto readlock = rlock();
+    auto readlock = inner_storage_.rlock();
     auto writelock = wlock_deferred();
     
-    auto it = data_.find(key);
-    if (it == data_.end() || it->second->isExpired()) {
+    auto it = inner_storage_.find(key);
+    if (it == inner_storage_.end() || it->second->isExpired()) {
         return 0; // 键不存在
     }
     
@@ -951,10 +951,10 @@ size_t StorageEngine::zrem(const Key& key, const std::vector<Value>& members) {
 }
 
 bool StorageEngine::zscore(const Key& key, const Value& member, double& score) {
-    auto readlock = rlock();
+    auto readlock = inner_storage_.rlock();
     
-    auto it = data_.find(key);
-    if (it == data_.end() || it->second->isExpired()) {
+    auto it = inner_storage_.find(key);
+    if (it == inner_storage_.end() || it->second->isExpired()) {
         return false;
     }
     
@@ -971,10 +971,10 @@ bool StorageEngine::zscore(const Key& key, const Value& member, double& score) {
 }
 
 bool StorageEngine::zismember(const Key& key, const Value& member) {
-    auto readlock = rlock();
+    auto readlock = inner_storage_.rlock();
     
-    auto it = data_.find(key);
-    if (it == data_.end() || it->second->isExpired()) {
+    auto it = inner_storage_.find(key);
+    if (it == inner_storage_.end() || it->second->isExpired()) {
         return false;
     }
     
@@ -991,10 +991,10 @@ bool StorageEngine::zismember(const Key& key, const Value& member) {
 }
 
 bool StorageEngine::zrank(const Key& key, const Value& member, size_t& rank) {
-    auto readlock = rlock();
+    auto readlock = inner_storage_.rlock();
     
-    auto it = data_.find(key);
-    if (it == data_.end() || it->second->isExpired()) {
+    auto it = inner_storage_.find(key);
+    if (it == inner_storage_.end() || it->second->isExpired()) {
         return false;
     }
     
@@ -1011,10 +1011,10 @@ bool StorageEngine::zrank(const Key& key, const Value& member, size_t& rank) {
 }
 
 bool StorageEngine::zrevrank(const Key& key, const Value& member, size_t& rank) {
-    auto readlock = rlock();
+    auto readlock = inner_storage_.rlock();
     
-    auto it = data_.find(key);
-    if (it == data_.end() || it->second->isExpired()) {
+    auto it = inner_storage_.find(key);
+    if (it == inner_storage_.end() || it->second->isExpired()) {
         return false;
     }
     
@@ -1031,10 +1031,10 @@ bool StorageEngine::zrevrank(const Key& key, const Value& member, size_t& rank) 
 }
 
 std::vector<std::pair<Value, double>> StorageEngine::zrange(const Key& key, size_t start, size_t stop) {
-    auto readlock = rlock();
+    auto readlock = inner_storage_.rlock();
     
-    auto it = data_.find(key);
-    if (it == data_.end() || it->second->isExpired()) {
+    auto it = inner_storage_.find(key);
+    if (it == inner_storage_.end() || it->second->isExpired()) {
         return {};
     }
     
@@ -1051,10 +1051,10 @@ std::vector<std::pair<Value, double>> StorageEngine::zrange(const Key& key, size
 }
 
 std::vector<std::pair<Value, double>> StorageEngine::zrevrange(const Key& key, size_t start, size_t stop) {
-    auto readlock = rlock();
+    auto readlock = inner_storage_.rlock();
     
-    auto it = data_.find(key);
-    if (it == data_.end() || it->second->isExpired()) {
+    auto it = inner_storage_.find(key);
+    if (it == inner_storage_.end() || it->second->isExpired()) {
         return {};
     }
     
@@ -1071,10 +1071,10 @@ std::vector<std::pair<Value, double>> StorageEngine::zrevrange(const Key& key, s
 }
 
 std::vector<std::pair<Value, double>> StorageEngine::zrangebyscore(const Key& key, double min, double max) {
-    auto readlock = rlock();
+    auto readlock = inner_storage_.rlock();
     
-    auto it = data_.find(key);
-    if (it == data_.end() || it->second->isExpired()) {
+    auto it = inner_storage_.find(key);
+    if (it == inner_storage_.end() || it->second->isExpired()) {
         return {};
     }
     
@@ -1091,10 +1091,10 @@ std::vector<std::pair<Value, double>> StorageEngine::zrangebyscore(const Key& ke
 }
 
 std::vector<std::pair<Value, double>> StorageEngine::zrevrangebyscore(const Key& key, double max, double min) {
-    auto readlock = rlock();
+    auto readlock = inner_storage_.rlock();
     
-    auto it = data_.find(key);
-    if (it == data_.end() || it->second->isExpired()) {
+    auto it = inner_storage_.find(key);
+    if (it == inner_storage_.end() || it->second->isExpired()) {
         return {};
     }
     
@@ -1111,10 +1111,10 @@ std::vector<std::pair<Value, double>> StorageEngine::zrevrangebyscore(const Key&
 }
 
 size_t StorageEngine::zcount(const Key& key, double min, double max) {
-    auto readlock = rlock();
+    auto readlock = inner_storage_.rlock();
     
-    auto it = data_.find(key);
-    if (it == data_.end() || it->second->isExpired()) {
+    auto it = inner_storage_.find(key);
+    if (it == inner_storage_.end() || it->second->isExpired()) {
         return 0;
     }
     
@@ -1127,10 +1127,10 @@ size_t StorageEngine::zcount(const Key& key, double min, double max) {
 }
 
 size_t StorageEngine::zcard(const Key& key) {
-    auto readlock = rlock();
+    auto readlock = inner_storage_.rlock();
     
-    auto it = data_.find(key);
-    if (it == data_.end() || it->second->isExpired()) {
+    auto it = inner_storage_.find(key);
+    if (it == inner_storage_.end() || it->second->isExpired()) {
         return 0;
     }
     
@@ -1144,19 +1144,19 @@ size_t StorageEngine::zcard(const Key& key) {
 
 // 位图操作实现
 bool StorageEngine::setBit(const Key& key, size_t offset, bool value) {
-    auto readlock = rlock();
+    auto readlock = inner_storage_.rlock();
     auto writelock = wlock_deferred();
-    auto it = data_.find(key);
+    auto it = inner_storage_.find(key);
     BitmapItem* bitmap_item = nullptr;
-    if (it == data_.end() || it->second->isExpired()) {
+    if (it == inner_storage_.end() || it->second->isExpired()) {
         // 创建新的位图项
         readlock.unlock();
         writelock.lock();
         // 检查键是否已存在
-        if (it == data_.end() || it->second->isExpired()) {
+        if (it == inner_storage_.end() || it->second->isExpired()) {
             auto new_item = createBitmapItem();
             bitmap_item = dynamic_cast<BitmapItem*>(new_item.get());
-            it = data_.insert_or_assign(key, std::move(new_item)).first;
+            it = inner_storage_.insert_or_assign(key, std::move(new_item)).first;
             total_keys_++;
         }
     }
@@ -1173,10 +1173,10 @@ bool StorageEngine::setBit(const Key& key, size_t offset, bool value) {
 }
 
 bool StorageEngine::getBit(const Key& key, size_t offset) {
-    auto readlock = rlock();
+    auto readlock = inner_storage_.rlock();
     
-    auto it = data_.find(key);
-    if (it == data_.end() || it->second->isExpired()) {
+    auto it = inner_storage_.find(key);
+    if (it == inner_storage_.end() || it->second->isExpired()) {
         return false;
     }
     
@@ -1193,10 +1193,10 @@ bool StorageEngine::getBit(const Key& key, size_t offset) {
 }
 
 size_t StorageEngine::bitCount(const Key& key) {
-    auto readlock = rlock();
+    auto readlock = inner_storage_.rlock();
     
-    auto it = data_.find(key);
-    if (it == data_.end() || it->second->isExpired()) {
+    auto it = inner_storage_.find(key);
+    if (it == inner_storage_.end() || it->second->isExpired()) {
         return 0;
     }
     
@@ -1213,10 +1213,10 @@ size_t StorageEngine::bitCount(const Key& key) {
 }
 
 size_t StorageEngine::bitCount(const Key& key, size_t start, size_t end) {
-    auto readlock = rlock();
+    auto readlock = inner_storage_.rlock();
     
-    auto it = data_.find(key);
-    if (it == data_.end() || it->second->isExpired()) {
+    auto it = inner_storage_.find(key);
+    if (it == inner_storage_.end() || it->second->isExpired()) {
         return 0;
     }
     
@@ -1233,13 +1233,13 @@ size_t StorageEngine::bitCount(const Key& key, size_t start, size_t end) {
 }
 
 bool StorageEngine::bitOp(const std::string& operation, const Key& destkey, const std::vector<Key>& keys) {
-    auto writelock = wlock(); // todo: opt here
+    auto writelock = inner_storage_.wlock(); // todo: opt here
 
     // 检查源键是否都存在且未过期且都是位图类型
     std::vector<BitmapItem*> bitmap_items;
     for (const auto& key : keys) {
-        auto it = data_.find(key);
-        if (it == data_.end() || it->second->isExpired()) {
+        auto it = inner_storage_.find(key);
+        if (it == inner_storage_.end() || it->second->isExpired()) {
             return false;
         }
         
@@ -1252,8 +1252,8 @@ bool StorageEngine::bitOp(const std::string& operation, const Key& destkey, cons
     }
     
     // 创建或更新目标键
-    data_[destkey] = createBitmapItem();
-    BitmapItem* dest_bitmap = dynamic_cast<BitmapItem*>(data_[destkey].get());
+    inner_storage_[destkey] = createBitmapItem();
+    BitmapItem* dest_bitmap = dynamic_cast<BitmapItem*>(inner_storage_[destkey].get());
     
     if (operation == "AND") {
         return dest_bitmap->bitOpAnd(bitmap_items);
@@ -1270,15 +1270,15 @@ bool StorageEngine::bitOp(const std::string& operation, const Key& destkey, cons
 
 // HyperLogLog操作实现
 bool StorageEngine::pfadd(const Key& key, const std::vector<Value>& elements) {
-    auto writelock = wlock(); // todo: opt here
+    auto writelock = inner_storage_.wlock(); // todo: opt here
     
-    auto it = data_.find(key);
+    auto it = inner_storage_.find(key);
     HyperLogLogItem* hll_item = nullptr;
     
-    if (it == data_.end() || it->second->isExpired()) {
+    if (it == inner_storage_.end() || it->second->isExpired()) {
         // 创建新的HyperLogLog项
-        data_[key] = createHyperLogLogItem();
-        hll_item = dynamic_cast<HyperLogLogItem*>(data_[key].get());
+        inner_storage_[key] = createHyperLogLogItem();
+        hll_item = dynamic_cast<HyperLogLogItem*>(inner_storage_[key].get());
         total_keys_++;
     } else {
         // 检查是否是HyperLogLog类型
@@ -1299,10 +1299,10 @@ bool StorageEngine::pfadd(const Key& key, const std::vector<Value>& elements) {
 }
 
 uint64_t StorageEngine::pfcount(const Key& key) {
-    auto readlock = rlock();
+    auto readlock = inner_storage_.rlock();
     
-    auto it = data_.find(key);
-    if (it == data_.end()) {
+    auto it = inner_storage_.find(key);
+    if (it == inner_storage_.end()) {
         return 0;
     }
     if (it->second->isExpired()) {
@@ -1322,13 +1322,13 @@ uint64_t StorageEngine::pfcount(const Key& key) {
 }
 
 bool StorageEngine::pfmerge(const Key& destkey, const std::vector<Key>& sourcekeys) {
-    auto writelock = wlock(); // todo: opt here
+    auto writelock = inner_storage_.wlock(); // todo: opt here
     
     // 检查源键是否都存在且未过期且都是HyperLogLog类型
     std::vector<HyperLogLogItem*> hll_items;
     for (const auto& key : sourcekeys) {
-        auto it = data_.find(key);
-        if (it == data_.end() || it->second->isExpired()) {
+        auto it = inner_storage_.find(key);
+        if (it == inner_storage_.end() || it->second->isExpired()) {
             continue; // 忽略不存在或过期的键
         }
         
@@ -1342,13 +1342,13 @@ bool StorageEngine::pfmerge(const Key& destkey, const std::vector<Key>& sourceke
     
     if (hll_items.empty()) {
         // 如果没有有效的源键，创建一个空的HyperLogLog
-        data_[destkey] = createHyperLogLogItem();
+        inner_storage_[destkey] = createHyperLogLogItem();
         return true;
     }
     
     // 创建或更新目标键
-    data_[destkey] = createHyperLogLogItem();
-    HyperLogLogItem* dest_hll = dynamic_cast<HyperLogLogItem*>(data_[destkey].get());
+    inner_storage_[destkey] = createHyperLogLogItem();
+    HyperLogLogItem* dest_hll = dynamic_cast<HyperLogLogItem*>(inner_storage_[destkey].get());
     
     return dest_hll->merge(hll_items);
 }
@@ -1364,11 +1364,11 @@ std::unique_ptr<DataItem> StorageEngine::createHyperLogLogItem(Timestamp expire_
 
 // 淘汰策略相关方法实现
 std::vector<Key> StorageEngine::getAllKeys() const {
-    auto readlock = rlock();
+    auto readlock = inner_storage_.rlock();
     std::vector<Key> result;
-    result.reserve(data_.size());
+    result.reserve(inner_storage_.size());
     
-    for (const auto& pair : data_) {
+    for (const auto& pair : inner_storage_) {
         result.push_back(pair.first);
     }
     
@@ -1376,10 +1376,10 @@ std::vector<Key> StorageEngine::getAllKeys() const {
 }
 
 bool StorageEngine::hasExpiration(const Key& key) const {
-    auto readlock = rlock();
+    auto readlock = inner_storage_.rlock();
     
-    auto it = data_.find(key);
-    if (it == data_.end()) {
+    auto it = inner_storage_.find(key);
+    if (it == inner_storage_.end()) {
         return false;
     }
     // hasExpiration is atomic, so we can read it without a lock
@@ -1387,10 +1387,10 @@ bool StorageEngine::hasExpiration(const Key& key) const {
 }
 
 Timestamp StorageEngine::getLastAccessed(const Key& key) const {
-    auto readlock = rlock();
+    auto readlock = inner_storage_.rlock();
     
-    auto it = data_.find(key);
-    if (it == data_.end()) {
+    auto it = inner_storage_.find(key);
+    if (it == inner_storage_.end()) {
         return Timestamp::min();
     }
     // getLastAccessed is atomic, so we can read it without a lock
@@ -1398,10 +1398,10 @@ Timestamp StorageEngine::getLastAccessed(const Key& key) const {
 }
 
 int StorageEngine::getAccessFrequency(const Key& key) const {
-    auto readlock = rlock();
+    auto readlock = inner_storage_.rlock();
     
-    auto it = data_.find(key);
-    if (it == data_.end()) {
+    auto it = inner_storage_.find(key);
+    if (it == inner_storage_.end()) {
         return 0;
     }
     // getAccessFrequency is atomic, so we can read it without a lock
@@ -1409,10 +1409,10 @@ int StorageEngine::getAccessFrequency(const Key& key) const {
 }
 
 Timestamp StorageEngine::getExpiration(const Key& key) const {
-    auto readlock = rlock();
+    auto readlock = inner_storage_.rlock();
     
-    auto it = data_.find(key);
-    if (it == data_.end() || !it->second->hasExpiration()) {
+    auto it = inner_storage_.find(key);
+    if (it == inner_storage_.end() || !it->second->hasExpiration()) {
         return Timestamp::max();
     }
     // getExpiration is atomic, so we can read it without a lock
@@ -1420,10 +1420,10 @@ Timestamp StorageEngine::getExpiration(const Key& key) const {
 }
 
 size_t StorageEngine::getKeySize(const Key& key) const {
-    auto readlock = rlock();
+    auto readlock = inner_storage_.rlock();
     
-    auto it = data_.find(key);
-    if (it == data_.end()) {
+    auto it = inner_storage_.find(key);
+    if (it == inner_storage_.end()) {
         return 0;
     }
     
