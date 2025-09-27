@@ -1233,8 +1233,8 @@ size_t StorageEngine::bitCount(const Key& key, size_t start, size_t end) {
 }
 
 bool StorageEngine::bitOp(const std::string& operation, const Key& destkey, const std::vector<Key>& keys) {
-    std::unique_lock<std::shared_mutex> lock(mutex_);
-    
+    auto writelock = wlock(); // todo: opt here
+
     // 检查源键是否都存在且未过期且都是位图类型
     std::vector<BitmapItem*> bitmap_items;
     for (const auto& key : keys) {
@@ -1270,7 +1270,7 @@ bool StorageEngine::bitOp(const std::string& operation, const Key& destkey, cons
 
 // HyperLogLog操作实现
 bool StorageEngine::pfadd(const Key& key, const std::vector<Value>& elements) {
-    std::unique_lock<std::shared_mutex> lock(mutex_);
+    auto writelock = wlock(); // todo: opt here
     
     auto it = data_.find(key);
     HyperLogLogItem* hll_item = nullptr;
@@ -1322,7 +1322,7 @@ uint64_t StorageEngine::pfcount(const Key& key) {
 }
 
 bool StorageEngine::pfmerge(const Key& destkey, const std::vector<Key>& sourcekeys) {
-    std::unique_lock<std::shared_mutex> lock(mutex_);
+    auto writelock = wlock(); // todo: opt here
     
     // 检查源键是否都存在且未过期且都是HyperLogLog类型
     std::vector<HyperLogLogItem*> hll_items;
