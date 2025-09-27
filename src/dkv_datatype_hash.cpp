@@ -15,6 +15,16 @@ HashItem::HashItem(Timestamp expire_time)
     : DataItem(expire_time) {
 }
 
+HashItem::HashItem(const HashItem& other)
+    : DataItem(other) {
+    fields_ = other.fields_; // 深拷贝哈希字段
+}
+
+std::unique_ptr<DataItem> HashItem::clone() const {
+    auto cloned = std::make_unique<HashItem>(*this);
+    return cloned;
+}
+
 DataType HashItem::getType() const {
     return DataType::HASH;
 }

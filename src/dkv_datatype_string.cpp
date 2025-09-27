@@ -15,6 +15,16 @@ StringItem::StringItem(const Value& value, Timestamp expire_time)
     : value_(value), DataItem(expire_time) {
 }
 
+StringItem::StringItem(const StringItem& other)
+    : DataItem(other) {
+    value_ = other.value_; // 深拷贝字符串值
+}
+
+std::unique_ptr<DataItem> StringItem::clone() const {
+    auto cloned = std::make_unique<StringItem>(*this);
+    return cloned;
+}
+
 DataType StringItem::getType() const {
     return DataType::STRING;
 }

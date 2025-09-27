@@ -14,11 +14,13 @@ private:
 public:
     HashItem();
     HashItem(Timestamp expire_time);
+    HashItem(const HashItem& other);
     
     // 从DataItem继承的方法
     DataType getType() const override;
     std::string serialize() const override;
     void deserialize(const std::string& data) override;
+    std::unique_ptr<DataItem> clone() const override;
     
     // 哈希特有操作
     bool setField(const Value& field, const Value& value);

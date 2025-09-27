@@ -14,6 +14,16 @@ BitmapItem::BitmapItem(Timestamp expire_time)
     : DataItem(expire_time) {
 }
 
+BitmapItem::BitmapItem(const BitmapItem& other)
+    : DataItem(other) {
+    bits_ = other.bits_; // 深拷贝位图数据
+}
+
+std::unique_ptr<DataItem> BitmapItem::clone() const {
+    auto cloned = std::make_unique<BitmapItem>(*this);
+    return cloned;
+}
+
 DataType BitmapItem::getType() const {
     return DataType::BITMAP;
 }

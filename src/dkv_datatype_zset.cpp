@@ -12,6 +12,17 @@ ZSetItem::ZSetItem() : DataItem() {
 ZSetItem::ZSetItem(Timestamp expire_time) : DataItem(expire_time) {
 }
 
+ZSetItem::ZSetItem(const ZSetItem& other)
+    : DataItem(other) {
+    elements_by_score_ = other.elements_by_score_; // 深拷贝按分数排序的元素
+    scores_ = other.scores_; // 深拷贝元素分数映射
+}
+
+std::unique_ptr<DataItem> ZSetItem::clone() const {
+    auto cloned = std::make_unique<ZSetItem>(*this);
+    return cloned;
+}
+
 DataType ZSetItem::getType() const {
     return DataType::ZSET;
 }

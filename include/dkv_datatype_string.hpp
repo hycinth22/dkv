@@ -12,11 +12,13 @@ private:
 public:
     explicit StringItem(const Value& value = "");
     StringItem(const Value& value, Timestamp expire_time);
+    StringItem(const StringItem& other);
 
     // 从DataItem继承的方法
     DataType getType() const override;
     std::string serialize() const override;
     void deserialize(const std::string& data) override;
+    std::unique_ptr<DataItem> clone() const override;
 
     // String特有操作
     const Value& getValue() const;

@@ -31,11 +31,13 @@ private:
 public:
     HyperLogLogItem();
     HyperLogLogItem(Timestamp expire_time);
+    HyperLogLogItem(const HyperLogLogItem& other);
 
     // 从DataItem继承的方法
     DataType getType() const override;
     std::string serialize() const override;
     void deserialize(const std::string& data) override;
+    std::unique_ptr<DataItem> clone() const override;
 
     // HyperLogLog特有操作
     // 添加元素到HyperLogLog

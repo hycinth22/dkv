@@ -12,6 +12,13 @@ DataItem::DataItem(Timestamp expire_time)
     : expire_time_(expire_time) {
 }
 
+DataItem::DataItem(const DataItem& other)
+    : expire_time_(other.expire_time_.load()),
+      last_accessed_(other.last_accessed_.load()),
+      access_frequency_(other.access_frequency_.load()) {
+}
+
+
 // TTL方法实现
 bool DataItem::isExpired() const {
     if (!hasExpiration()) {

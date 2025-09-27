@@ -14,11 +14,13 @@ private:
 public:
     BitmapItem();
     BitmapItem(Timestamp expire_time);
+    BitmapItem(const BitmapItem& other);
 
     // 从DataItem继承的方法
     DataType getType() const override;
     std::string serialize() const override;
     void deserialize(const std::string& data) override;
+    std::unique_ptr<DataItem> clone() const override;
 
     // Bitmap特有操作
     // 设置指定位的值

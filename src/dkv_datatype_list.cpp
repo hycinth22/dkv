@@ -14,6 +14,16 @@ ListItem::ListItem(Timestamp expire_time)
     : DataItem(expire_time) {
 }
 
+ListItem::ListItem(const ListItem& other)
+    : DataItem(other) {
+    elements_ = other.elements_; // 深拷贝元素列表
+}
+
+std::unique_ptr<DataItem> ListItem::clone() const {
+    auto cloned = std::make_unique<ListItem>(*this);
+    return cloned;
+}
+
 DataType ListItem::getType() const {
     return DataType::LIST;
 }

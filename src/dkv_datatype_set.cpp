@@ -10,6 +10,16 @@ SetItem::SetItem() : DataItem() {
 SetItem::SetItem(Timestamp expire_time) : DataItem(expire_time) {
 }
 
+SetItem::SetItem(const SetItem& other)
+    : DataItem(other) {
+    elements_ = other.elements_; // 深拷贝集合元素
+}
+
+std::unique_ptr<DataItem> SetItem::clone() const {
+    auto cloned = std::make_unique<SetItem>(*this);
+    return cloned;
+}
+
 DataType SetItem::getType() const {
     return DataType::SET;
 }

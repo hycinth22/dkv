@@ -16,11 +16,13 @@ private:
 public:
     SetItem();
     SetItem(Timestamp expire_time);
+    SetItem(const SetItem& other);
     
     // 从DataItem继承的方法
     DataType getType() const override;
     std::string serialize() const override;
     void deserialize(const std::string& data) override;
+    std::unique_ptr<DataItem> clone() const override;
     
     // 集合特有操作
     // 向集合添加一个元素

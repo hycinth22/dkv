@@ -22,11 +22,13 @@ private:
 public:
     ZSetItem();
     ZSetItem(Timestamp expire_time);
+    ZSetItem(const ZSetItem& other);
     
     // 从DataItem继承的方法
     DataType getType() const override;
     std::string serialize() const override;
     void deserialize(const std::string& data) override;
+    std::unique_ptr<DataItem> clone() const override;
     
     // 有序集合特有操作
     // 向有序集合添加元素及其分数

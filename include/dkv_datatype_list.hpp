@@ -16,11 +16,13 @@ private:
 public:
     ListItem();
     ListItem(Timestamp expire_time);
-    
+    ListItem(const ListItem& other);
+
     // 从DataItem继承的方法
     DataType getType() const override;
     std::string serialize() const override;
     void deserialize(const std::string& data) override;
+    std::unique_ptr<DataItem> clone() const override;
     
     // 列表特有操作
     // 在列表左侧插入元素

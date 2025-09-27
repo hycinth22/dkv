@@ -99,6 +99,18 @@ HyperLogLogItem::HyperLogLogItem()
       DataItem() {
 }
 
+HyperLogLogItem::HyperLogLogItem(const HyperLogLogItem& other)
+    : DataItem(other) {
+    registers_ = other.registers_; // 深拷贝寄存器数组
+    cardinality_ = other.cardinality_;
+    cache_valid_ = other.cache_valid_;
+}
+
+std::unique_ptr<DataItem> HyperLogLogItem::clone() const {
+    auto cloned = std::make_unique<HyperLogLogItem>(*this);
+    return cloned;
+}
+
 HyperLogLogItem::HyperLogLogItem(Timestamp expire_time)
     : registers_(kRegisterCount, 0), cardinality_(0), cache_valid_(false),
       DataItem(expire_time) {

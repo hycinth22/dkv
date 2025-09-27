@@ -33,10 +33,15 @@ public:
     virtual DataType getType() const = 0;
     virtual std::string serialize() const = 0;
     virtual void deserialize(const std::string& data) = 0;
+    
+    // 用于MVCC的克隆方法
+    virtual std::unique_ptr<DataItem> clone() const = 0;
 
     // 构造函数
     DataItem();
     DataItem(Timestamp expire_time);
+    DataItem(const DataItem& other);
+
 
     // TTL方法
     bool isExpired() const;
