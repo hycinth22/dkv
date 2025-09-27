@@ -2,7 +2,7 @@
 #include "dkv_resp.hpp"
 #include "dkv_logger.hpp"
 #include "dkv_server.hpp"
-
+#include "dkv_datatypes.hpp"
 #include <filesystem>
 #include <chrono>
 

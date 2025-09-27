@@ -1,8 +1,10 @@
 #pragma once
 
 #include "dkv_core.hpp"
+#include "dkv_datatypes.hpp"
 #include "dkv_memory_allocator.hpp"
 #include "dkv_rdb.hpp"
+#include "dkv_transaction_manager.hpp"
 #include <unordered_map>
 #include <shared_mutex>
 #include <memory>
@@ -27,7 +29,14 @@ public:
     InnerStorage& operator=(InnerStorage&&) = delete;
 
     // 获取数据项
-    DataItem* get(const Key& key) {
+    std::unique_ptr<DataItem>& getRefOrInsert(const Key& key) {
+        auto it = data_.find(key);
+        if (it == data_.end()) {
+            data_[key] = std::unique_ptr<DataItem>(nullptr);
+        }
+        return data_[key];
+    }
+    DataItem* get(const Key& key) const {
         auto it = data_.find(key);
         if (it != data_.end()) {
             return it->second.get();
@@ -113,6 +122,8 @@ private:
     
     // 内存使用统计
     std::atomic<size_t> memory_usage_;
+
+    TransactionManager transaction_manager_;
     
     // 获取内存使用量
     size_t getCurrentMemoryUsage() const;
@@ -124,7 +135,8 @@ private:
     std::string getMemoryStats() const;
 
 public:
-    StorageEngine() = default;
+    StorageEngine(TransactionIsolationLevel tx_isolation_level = TransactionIsolationLevel::READ_COMMITTED) 
+    : transaction_manager_(this, tx_isolation_level) {}
     ~StorageEngine() = default;
     
     // 禁止拷贝和移动
@@ -132,7 +144,7 @@ public:
     StorageEngine& operator=(const StorageEngine&) = delete;
     StorageEngine(StorageEngine&&) = delete;
     StorageEngine& operator=(StorageEngine&&) = delete;
-    
+
     // 基本操作
     bool set(const Key& key, const Value& value);
     bool set(const Key& key, const Value& value, int64_t expire_seconds);

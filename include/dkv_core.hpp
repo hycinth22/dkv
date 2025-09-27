@@ -3,13 +3,27 @@
 #include <cstdint>
 #include <string>
 #include <vector>
-
-#include "dkv_datatypes.hpp"
+#include <memory>
+#include <chrono>
 
 namespace dkv {
 
 // 基础类型定义
+// 基础类型定义
+using Key = std::string;
+using Value = std::string;
 using Timestamp = std::chrono::system_clock::time_point;
+
+// 数据类型枚举
+enum class DataType {
+    STRING = 0,
+    HASH = 1,
+    LIST = 2,
+    SET = 3,
+    ZSET = 4,
+    BITMAP = 5,
+    HYPERLOGLOG = 6
+};
 
 // 命令类型枚举
 enum class CommandType {
@@ -76,6 +90,10 @@ enum class CommandType {
     PFMERGE = 51,
     // AOF重写专用命令
     RESTORE_HLL = 52,
+    // 事务命令
+    MULTI = 53,
+    EXEC = 54,
+    DISCARD = 55
 };
 
 // 响应状态枚举
@@ -98,6 +116,14 @@ enum class EvictionPolicy {
     VOLATILE_TTL = 7          // 移除那些TTL值最小的键
 };
 
+// 事务隔离等级枚举
+enum class TransactionIsolationLevel {
+    READ_UNCOMMITTED = 0,     // 读未提交：允许事务读取其他事务尚未提交的数据
+    READ_COMMITTED = 1,       // 读已提交：只允许事务读取其他事务已提交的数据
+    REPEATABLE_READ = 2,      // 可重复读：确保事务多次读取同一数据时得到相同结果
+    SERIALIZABLE = 3          // 串行化：最高隔离级别，强制事务串行执行
+};
+
 // 命令结构
 struct Command {
     CommandType type;
@@ -118,7 +144,18 @@ struct Response {
         : status(s), message(m), data(d) {}
 };
 
-} // namespace dkv
 
+class DataItem;
+enum class UndoLogType {
+    SET,
+    DELETE
+};
+
+struct UndoLog {
+    UndoLogType ty;
+    std::unique_ptr<DataItem> old_value;
+};
+
+} // namespace dkv
 
 #include "dkv_utils.hpp"

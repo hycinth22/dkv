@@ -1,5 +1,5 @@
 #pragma once
-
+#include "dkv_core.hpp"
 #include <cstdint>
 #include <string>
 #include <memory>
@@ -10,21 +10,7 @@
 
 namespace dkv {
 
-// 基础类型定义
-using Key = std::string;
-using Value = std::string;
-using Timestamp = std::chrono::system_clock::time_point;
-
-// 数据类型枚举
-enum class DataType {
-    STRING = 0,
-    HASH = 1,
-    LIST = 2,
-    SET = 3,
-    ZSET = 4,
-    BITMAP = 5,
-    HYPERLOGLOG = 6
-};
+class UndoLog;
 
 // 基础数据项接口
 class DataItem {
@@ -42,6 +28,7 @@ public:
     DataItem(Timestamp expire_time);
     DataItem(const DataItem& other);
 
+    DataItem& operator=(const DataItem& other) = delete;
 
     // TTL方法
     bool isExpired() const;
@@ -60,6 +47,29 @@ public:
     std::shared_lock<std::shared_mutex> rlock();
     std::shared_mutex& getMutex();
     
+    // MVCC相关方法
+    uint64_t getTransactionId() const {
+        return transaction_id_;
+    }
+    void setTransactionId(uint64_t id) {
+        transaction_id_ = id;
+    }
+    const std::unique_ptr<UndoLog>& getUndoLog() const {
+        return undo_log_;
+    }
+    std::unique_ptr<UndoLog>& getUndoLog() {
+        return undo_log_;
+    }
+    void setUndoLog(std::unique_ptr<UndoLog> undo_log) {
+        undo_log_ = std::move(undo_log);
+    }
+    bool isDeleted() const {
+        return deleted_;
+    }
+    void setDeleted(bool deleted) {
+        deleted_ = deleted;
+    }
+    
 protected:
     // TTL
     std::atomic<Timestamp> expire_time_;
@@ -70,6 +80,11 @@ protected:
     
     // 读写锁，用于保护数据项的并发访问
     mutable std::shared_mutex item_mutex_;
+
+    // MVCC
+    std::atomic<uint64_t> transaction_id_ = {0};
+    std::unique_ptr<UndoLog> undo_log_;
+    bool deleted_ = {false};
 };
 
 // 前向声明

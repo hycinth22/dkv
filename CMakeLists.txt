@@ -73,6 +73,9 @@ target_link_libraries(test_aof dkv_lib)
 add_executable(test_concurrency tests/test_concurrency.cpp)
 target_link_libraries(test_concurrency dkv_lib)
 
+add_executable(test_storage_mvcc tests/test_storage_mvcc.cpp)
+target_link_libraries(test_storage_mvcc dkv_lib)
+
 # 启用测试
 enable_testing()
 add_test(NAME basic_tests COMMAND test_basic)
@@ -89,6 +92,7 @@ add_test(NAME maxmemory_tests COMMAND test_maxmemory)
 add_test(NAME rdb_tests COMMAND test_rdb)
 add_test(NAME aof_tests COMMAND test_aof)
 add_test(NAME concurrency_tests COMMAND test_concurrency)
+add_test(NAME storage_mvcc_tests COMMAND test_storage_mvcc)
 
 
 # 安装规则
