@@ -2,18 +2,19 @@
 
 DKV是一个基于现代C++17实现的高性能键值（Key-Value）存储系统，具备数据持久化支持和高并发处理能力。
 
-## 主要功能特性
+**现代C++17实现**：利用智能指针、移动语义、原子操作、线程安全等现代C++特性。类型安全的枚举和强类型。模板元编程。
 
-### 核心特性
-- **现代C++17实现**：利用智能指针、移动语义、原子操作、线程安全等现代C++特性。类型安全的枚举和强类型。模板元编程。
-- **存储引擎**：高效内存存储实现
-- **持久化**：支持RDB快照、AOF持久化写入与恢复。支持自动AOF重写。
-- **数据类型支持**：：String（字符串）、Hash（哈希）、List（列表）、Set（集合）、ZSet（有序集合）、Bitmap（位图）、HyperLogLog
-- **高并发处理**：基于多线程Reactor模型、事件驱动的非阻塞I/O（epoll），支持高并发连接处理。使用线程池并发处理Command。
-- **线程安全**：使用读写锁保护数据访问，支持多客户端并发连接
-- **TTL支持**：支持为key设置过期时间; 后台根据过期时间自动清理过期键值对
-- **内存限制与淘汰**：支持内存配额限制，支持8种淘汰策略（NOEVICTION/VOLATILE_LRU/ALLKEYS_LRU/VOLATILE_LFU/ALLKEYS_LFU/VOLATILE_RANDOM/ALLKEYS_RANDOM/VOLATILE_TTL）。
-- **事务支持**：支持MULTI、EXEC、DISCARD等事务命令，支持四种事务隔离级别
+**持久化**：支持RDB快照、AOF持久化写入与恢复。支持自动AOF重写。
+
+**高并发处理**：基于多线程Reactor模型、事件驱动的非阻塞I/O（epoll），支持高并发连接处理。使用线程池并发处理Command。
+
+**线程安全**：使用读写锁保护数据访问，支持多客户端并发连接
+
+**TTL支持**：支持为key设置过期时间; 后台根据过期时间自动清理过期键值对
+
+**内存限制与淘汰**：支持内存配额限制，支持8种淘汰策略NOEVICTION、{VOLATILE/ALLKEYS}_{LRU/LFU/RANDOM}、VOLATILE_TTL。
+
+**事务支持**：支持MULTI、EXEC、DISCARD等事务命令，支持四种事务隔离级别
 
 ### 命令支持
 
@@ -29,7 +30,6 @@ DKV是一个基于现代C++17实现的高性能键值（Key-Value）存储系统
 | HyperLogLog | PFADD、PFCOUNT、PFMERGE                                 |
 | 服务器管理   | INFO、DBSIZE、FLUSH、SHUTDOWN、SAVE/BGSAVE、             |
 | 事务        | MULTI、EXEC、DISCARD                                    |
-|-------------|------------------------------------------------------=-|
 
 ## 项目结构
 
@@ -71,7 +71,7 @@ dkv/
 
 ### 构建要求
 - CMake 3.10或更高版本
-- 支持C++17的编译器（GCC 7+、Clang 5+、MSVC 2019+）
+- 支持C++17的编译器（GCC 7+、Clang 5+）
 - 线程库（操作系统安装）
 
 ```bash
@@ -161,10 +161,9 @@ PFADD hll 1 2 3
 PFCOUNT hll
 ```
 
-## 测试用例
+## 测试
 
-DKV编写了一系列测试用例，位于tests目录下
-
+测试代码位于tests目录下
 
 ```bash
 # 进入项目目录
