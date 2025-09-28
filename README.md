@@ -74,6 +74,7 @@ dkv/
 - CMake 3.10或更高版本
 - 支持C++17的编译器（GCC 7+、Clang 5+）
 - 线程库（操作系统安装）
+- Google Benchmark库（可选，如果需要性能测试）
 
 ```bash
 # 进入项目目录
