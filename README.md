@@ -16,7 +16,7 @@ DKV是一个基于现代C++17实现的高性能键值（Key-Value）存储系统
 
 **事务支持**：支持MULTI、EXEC、DISCARD等事务命令，支持四种事务隔离级别
 
-### 命令支持
+### Command Support
 
 | 类型        | 支持的命令 |
 |-------------|-------------------------------------------------------|
@@ -67,7 +67,8 @@ dkv/
 └── config.conf         # 配置文件示例
 ```
 
-## 构建方法
+
+## Build
 
 ### 构建要求
 - CMake 3.10或更高版本
@@ -85,9 +86,6 @@ mkdir build && cd build
 cmake ..
 make
 
-# 运行所有测试
-make test
-
 # 默认端口启动
 ./bin/dkv_server
 
@@ -99,13 +97,25 @@ make test
 
 # 查看帮助
 ./bin/dkv_server --help
-```
 
-### 自定义构建目标
+# 运行所有测试
+make test
+# 也可以使用CMake test driver
+ctest -v
+ctest -R test_basic
+# 或者单独运行测试
+./bin/test_basic
+./bin/test_datatype_string
+./bin/test_datatype_hyperloglog
+./bin/test_server_management
+./bin/test_memory_allocator
+./bin/test_maxmemory
+./bin/test_rdb
+./bin/test_aof
+# 使用Python客户端测试
+python3 tests/test_client.py
 
-项目提供了几个自定义的CMake目标，方便开发和测试：
-
-```bash
+# 项目定义了几个自定义的CMake目标，方便开发和测试：
 # 构建Debug版本
 make debug
 
@@ -116,92 +126,35 @@ make release
 make clean-all
 ```
 
-## 配置选项
-
-DKV支持通过配置文件进行详细配置，主要配置项包括：
+## 配置文件示例
 
 ```conf
-# 基本配置
-port 6380                  # 服务器端口
-maxmemory 1073741824       # 最大内存限制（1GB）
-threads 4                  # 工作线程数量
+port 6379
+maxmemory 1073741824  # 1GB
+threads 4
 
-# RDB持久化配置
-enable_rdb yes             # 启用RDB持久化
-rdb_filename dump.rdb      # RDB文件名
-rdb_save_interval 3600     # RDB保存间隔（秒）
-rdb_save_changes 1000      # 触发RDB的变更次数
+# RDB持久化
+enable_rdb yes
+rdb_filename dump.rdb
+rdb_save_interval 3600  # 1小时
+rdb_save_changes 1000   # 1000次变更
 
-# AOF持久化配置
-enable_aof yes             # 启用AOF持久化
-aof_filename appendonly.aof # AOF文件名
-aof_fsync_policy 1         # AOF刷盘策略（0=从不，1=每秒，2=每次写操作）
+# AOF持久化
+enable_aof yes
+aof_filename appendonly.aof
+aof_fsync_policy 1  # 0=never, 1=everysec, 2=always
 auto_aof_rewrite_percentage 100
 auto_aof_rewrite_min_size 64mb
 
-# 分布式配置（开发中）
-#is_master no
-#master_host 127.0.0.1
-#master_port 6379
-```
-
-## 客户端连接
-
-DKV兼容Redis RESP协议，可以使用标准Redis客户端进行连接：
-
-```bash
-# 使用redis-cli连接
-redis-cli -p 6379
-
-# 示例命令
-SET mykey "Hello DKV"
-GET mykey
-DEL mykey
-PFADD hll 1 2 3
-PFCOUNT hll
-```
-
-## 测试
-
-测试代码位于tests目录下
-
-```bash
-# 进入项目目录
-cd dkv
-
-# 创建构建目录
-mkdir build && cd build
-
-# 配置和构建
-cmake ..
-make
-
-# 运行所有测试
-make test
-
-# 或者单独运行测试
-./bin/test_basic
-./bin/test_datatype_string
-./bin/test_datatype_hyperloglog
-./bin/test_server_management
-./bin/test_memory_allocator
-./bin/test_maxmemory
-./bin/test_rdb
-
-# 也可以使用CMake test driver
-ctest -v
-ctest -R test_basic
-
-# 使用Python客户端测试
-python3 tests/test_client.py
+# 事务配置
+transaction_isolation_level read_committed # read_uncommitted, read_committed, repeatable_read, serializable
 ```
 
 ## 未来规划
 
 1. 实现分布式支持（主从复制、一致性哈希分片）
-2. 添加更多高级命令和功能
-3. 优化性能和内存使用
-4. 增强安全性和稳定性
+2. 支持标准REDIS客户端（REDIS-CLI）
+3. 支持更多高级命令和功能
 
 ## License
 
