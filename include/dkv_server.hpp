@@ -5,9 +5,12 @@
 #include "dkv_network.hpp"
 #include "dkv_aof.hpp"
 #include "dkv_command_handler.hpp"
+#include "dkv_transaction_manager.hpp"
 #include <memory>
 #include <thread>
 #include <atomic>
+#include <mutex>
+#include <shared_mutex>
 
 namespace dkv {
 
@@ -53,6 +56,12 @@ private:
     
     // 内存淘汰策略
     EvictionPolicy eviction_policy_ = EvictionPolicy::NOEVICTION; // 默认使用noeviction策略
+    
+    // 事务配置
+    TransactionIsolationLevel transaction_isolation_level_ = TransactionIsolationLevel::READ_COMMITTED; // 默认使用读已提交隔离级别
+    std::unique_ptr<TransactionManager> transaction_manager_; // 事务管理器
+    mutable std::shared_mutex transaction_mutex_; // 事务锁
+    std::unordered_map<int, uint64_t> client_transaction_ids_; // 客户端事务ID映射
 
 public:
     DKVServer(int port = 6379, size_t num_sub_reactors = 4, size_t num_workers = 8);
@@ -77,6 +86,7 @@ public:
     bool isRunning() const;
     
     // 执行命令
+    Response executeCommand(int client_fd, const Command& command);
     Response executeCommand(const Command& command);
     
     // 获取内存使用量
@@ -90,6 +100,12 @@ public:
     
     // 获取内存淘汰策略
     EvictionPolicy getEvictionPolicy() const;
+    
+    // 设置事务隔离等级
+    void setTransactionIsolationLevel(TransactionIsolationLevel level);
+
+    // 获取事务隔离等级
+    TransactionIsolationLevel getTransactionIsolationLevel() const;
     
     // 根据淘汰策略淘汰键
     void evictKeys();

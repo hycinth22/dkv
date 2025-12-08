@@ -6,11 +6,12 @@
 #include <string>
 
 namespace dkv {
-class StorageEngine;
 
 // RDB文件格式的魔数和版本号
 constexpr const char* RDB_MAGIC_STRING = "REDIS0009";
 constexpr uint32_t RDB_VERSION = 9;
+
+class StorageEngine;
 
 // RDB文件操作相关函数
 class RDBPersistence {

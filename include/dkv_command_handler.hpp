@@ -8,7 +8,7 @@
 
 namespace dkv {
 
-class DKVServer; // forward declaration for shutdown
+class DKVServer;
 
 // 命令处理器类，负责处理各种Redis命令
 class CommandHandler {
@@ -87,7 +87,7 @@ public:
     // RDB持久化命令处理
     Response handleSaveCommand(const std::string& rdb_filename);
     Response handleBgSaveCommand(const std::string& rdb_filename);
-    
+
     // 检查命令是否可能分配内存
     bool isReadOnlyCommand(CommandType type);
     

@@ -51,12 +51,12 @@ void WorkerThreadPool::stop() {
     }
 }
 
-Response WorkerThreadPool::executeCommand(const Command& command) {
+Response WorkerThreadPool::executeCommand(int client_fd, const Command& command) {
     if (!server_) {
         return Response(ResponseStatus::ERROR, "DKV server not initialized");
     }
     
-    return server_->executeCommand(command);
+    return server_->executeCommand(client_fd, command);
 }
 
 void WorkerThreadPool::workerThread() {
@@ -85,7 +85,7 @@ void WorkerThreadPool::workerThread() {
             // 执行命令
             Response response;
             if (task.command.type != CommandType::UNKNOWN) {
-                response = executeCommand(task.command);
+                response = executeCommand(task.client_fd, task.command);
                 // 调用SubReactor处理结果
                 if (task.sub_reactor) {
                     task.sub_reactor->handleCommandResult(task.client_fd, response);

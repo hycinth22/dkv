@@ -63,11 +63,19 @@ public:
     void setUndoLog(std::unique_ptr<UndoLog> undo_log) {
         undo_log_ = std::move(undo_log);
     }
+    // Deleted: 用于用户删除键值对，在相应MVCC版本中记录已删除（是有效记录）
     bool isDeleted() const {
         return deleted_;
     }
     void setDeleted(bool deleted) {
         deleted_ = deleted;
+    }
+    // Discard: 用于事务回滚，相应MVCC版本失效，记录失效，稍后purge
+    bool isDiscard() const {
+        return discard_;
+    }
+    bool setDiscard() {
+        discard_ = true;
     }
     
 protected:
@@ -85,6 +93,7 @@ protected:
     std::atomic<uint64_t> transaction_id_ = {0};
     std::unique_ptr<UndoLog> undo_log_;
     bool deleted_ = {false};
+    bool discard_ = {false};
 };
 
 // 前向声明

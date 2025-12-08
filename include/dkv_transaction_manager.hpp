@@ -11,7 +11,6 @@
 namespace dkv {
 
 class StorageEngine;
-
 // 事务类，负责事务的创建、执行和回滚
 class TransactionManager {
 public:
@@ -26,17 +25,16 @@ public:
     // 开始事务
     TransactionID begin();
 
-    // 提交事务
+    // 提交/回滚事务
     bool commit(TransactionID transaction_id);
-
-    // 回滚事务
-    void rollback(TransactionID transaction_id);
+    bool rollback(TransactionID transaction_id);
     
-    // 检查事务是否活跃
+    // 查询事务是否活跃
     bool isActive(TransactionID transaction_id) const;
-
-    // 获取活跃事务列表
     std::vector<TransactionID> getActiveTransactions() const;
+    // 查询事务是否已回滚
+    bool isRolledback(TransactionID transaction_id) const;
+    std::vector<TransactionID> getRolledbackTransactions() const;
 
     TransactionID peekNextTransactionID() const {
         return transaction_id_generator_.load();
@@ -47,14 +45,12 @@ private:
     const TransactionIsolationLevel isolation_level_;
     std::atomic<TransactionID> transaction_id_generator_{1};
     
-    mutable std::mutex active_transactions_mutex_;
-    std::unordered_map<TransactionID, Transaction> active_transactions_;
+    mutable std::mutex active_transactions_mutex_, rollback_transactions_mutex_;
+    std::unordered_map<TransactionID, Transaction> active_transactions_, rollback_transactions_;
 
     TransactionID nextTransactionId() {
         return transaction_id_generator_.fetch_add(1);
     }
-
-    std::shared_ptr<DataItem> saveOldValue(const std::string& key);
 };
 
 } // namespace dkv

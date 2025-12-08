@@ -1,4 +1,4 @@
-#include "dkv_storage_mvcc.hpp"
+#include "dkv_mvcc.hpp"
 #include "dkv_storage.hpp"
 #include "dkv_datatype_string.hpp"
 #include "test_runner.hpp"
@@ -12,7 +12,7 @@ namespace dkv {
 
 bool testMVCCGetAndSet() {
     // 创建必要的对象
-    InnerStorage inner_storage;
+    SimpleInnerStorage inner_storage;
     MVCC mvcc(inner_storage);
     StorageEngine engine;
     TransactionManager tx_manager(&engine, TransactionIsolationLevel::REPEATABLE_READ);
@@ -62,7 +62,7 @@ bool testMVCCGetAndSet() {
 
 bool testMVCCDelete() {
     // 创建必要的对象
-    InnerStorage inner_storage;
+    SimpleInnerStorage inner_storage;
     MVCC mvcc(inner_storage);
     StorageEngine engine;
     TransactionManager tx_manager(&engine, TransactionIsolationLevel::REPEATABLE_READ);
@@ -77,12 +77,9 @@ bool testMVCCDelete() {
     
     // 创建ReadView
     ReadView read_view = mvcc.createReadView(tx_id2, tx_manager);
-    
-    // 创建虚拟数据项用于删除
-    auto virtual_item = std::make_unique<StringItem>();
-    
+
     // 删除键
-    bool del_result = mvcc.del(tx_id1, "delete_key", std::move(virtual_item));
+    bool del_result = mvcc.del(tx_id1, "delete_key");
     ASSERT_TRUE(del_result);
     
     // 使用ReadView读取已删除的键，应该返回nullptr
@@ -99,7 +96,7 @@ bool testMVCCDelete() {
 
 bool testMVCCReadViewVisibility() {
     // 创建必要的对象
-    InnerStorage inner_storage;
+    SimpleInnerStorage inner_storage;
     MVCC mvcc(inner_storage);
     StorageEngine engine;
     TransactionManager tx_manager(&engine, TransactionIsolationLevel::REPEATABLE_READ);
@@ -153,7 +150,7 @@ bool testMVCCReadViewVisibility() {
 
 bool testMVCCUndoLog() {
     // 创建必要的对象
-    InnerStorage inner_storage;
+    SimpleInnerStorage inner_storage;
     MVCC mvcc(inner_storage);
     StorageEngine engine;
     TransactionManager tx_manager(&engine, TransactionIsolationLevel::REPEATABLE_READ);

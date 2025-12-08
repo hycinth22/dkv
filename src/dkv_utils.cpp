@@ -70,6 +70,10 @@ CommandType Utils::stringToCommandType(const std::string& cmd) {
         {"PFMERGE", CommandType::PFMERGE},
         // AOF重写专用命令
         {"RESTORE_HLL", CommandType::RESTORE_HLL},
+        // 事务命令
+        {"MULTI", CommandType::MULTI},
+        {"EXEC", CommandType::EXEC},
+        {"DISCARD", CommandType::DISCARD},
     };
     
     auto it = command_map.find(cmd);
@@ -140,6 +144,10 @@ std::string Utils::commandTypeToString(CommandType type) {
         {CommandType::PFMERGE, "PFMERGE"},
         // AOF重写专用命令
         {CommandType::RESTORE_HLL, "RESTORE_HLL"},
+        // 事务命令
+        {CommandType::MULTI, "MULTI"},
+        {CommandType::EXEC, "EXEC"},
+        {CommandType::DISCARD, "DISCARD"},
     };
     
     auto it = type_map.find(type);

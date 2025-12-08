@@ -48,7 +48,7 @@ private:
     // 工作线程函数
     void workerThread();
 
-    Response executeCommand(const Command& command);
+    Response executeCommand(int client_fd,const Command& command);
 };
 
 } // namespace dkv

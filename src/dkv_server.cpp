@@ -5,6 +5,7 @@
 #include <fstream>
 #include <sstream>
 #include <chrono>
+using namespace std;
 
 namespace dkv {
 
@@ -12,7 +13,7 @@ DKVServer::DKVServer(int port, size_t num_sub_reactors, size_t num_workers)
     : running_(false), cleanup_running_(false), 
       port_(port), max_memory_(0), num_sub_reactors_(num_sub_reactors), num_workers_(num_workers),
       enable_rdb_(true), rdb_filename_("dump.rdb"), rdb_save_interval_(3600), rdb_save_changes_(1000),
-      rdb_changes_(0), last_save_time_(std::chrono::system_clock::now()), rdb_save_running_(false),
+      rdb_changes_(0), last_save_time_(chrono::system_clock::now()), rdb_save_running_(false),
       enable_aof_(false), aof_filename_("appendonly.aof"), aof_fsync_policy_("everysec"),
       auto_aof_rewrite_percentage_(100), auto_aof_rewrite_min_size_(64 * 1024 * 1024) {
 }
@@ -38,7 +39,7 @@ bool DKVServer::start() {
     // 初始化AOF组件
     if (enable_aof_) {
         DKV_LOG_INFO("初始化AOF持久化");
-        aof_persistence_ = std::make_unique<AOFPersistence>();
+        aof_persistence_ = make_unique<AOFPersistence>();
         // 设置服务器引用，用于AOF重写
         aof_persistence_->setServer(this);
             
@@ -78,12 +79,12 @@ bool DKVServer::start() {
     cleanup_running_ = true;
     
     // 启动清理线程
-    cleanup_thread_ = std::thread(&DKVServer::cleanupExpiredKeys, this);
+    cleanup_thread_ = thread(&DKVServer::cleanupExpiredKeys, this);
     
     // 启动RDB自动保存线程
     if (enable_rdb_) {
         rdb_save_running_ = false;
-        rdb_save_thread_ = std::thread(&DKVServer::rdbAutoSaveThread, this);
+        rdb_save_thread_ = thread(&DKVServer::rdbAutoSaveThread, this);
     }
     
     // 启动网络服务器
@@ -105,7 +106,7 @@ void DKVServer::loadRDBFromConfig() {
     }
     
     // 使用配置的RDB文件名
-    std::string rdb_file = rdb_filename_;
+    string rdb_file = rdb_filename_;
     
     if (storage_engine_ && !rdb_file.empty()) {
         if (!storage_engine_->loadRDB(rdb_file)) {
@@ -114,7 +115,7 @@ void DKVServer::loadRDBFromConfig() {
             DKV_LOG_INFO("成功从RDB文件 ", rdb_file.c_str(), " 加载数据");
             
             // 更新上次保存时间和重置变更计数
-            last_save_time_ = std::chrono::system_clock::now();
+            last_save_time_ = chrono::system_clock::now();
             rdb_changes_ = 0;
         }
     }
@@ -174,7 +175,7 @@ void DKVServer::saveRDBFromConfig() {
     }
     
     // 使用配置的RDB文件名
-    std::string rdb_file = rdb_filename_;
+    string rdb_file = rdb_filename_;
     
     if (storage_engine_ && !rdb_file.empty()) {
         if (!storage_engine_->saveRDB(rdb_file)) {
@@ -183,13 +184,13 @@ void DKVServer::saveRDBFromConfig() {
             DKV_LOG_INFO("成功将数据保存到RDB文件 ", rdb_file.c_str());
             
             // 更新上次保存时间和重置变更计数
-            last_save_time_ = std::chrono::system_clock::now();
+            last_save_time_ = chrono::system_clock::now();
             rdb_changes_ = 0;
         }
     }
 }
 
-bool DKVServer::loadConfig(const std::string& config_file) {
+bool DKVServer::loadConfig(const string& config_file) {
     config_file_ = config_file;
     return parseConfigFile(config_file);
 }
@@ -234,6 +235,18 @@ EvictionPolicy DKVServer::getEvictionPolicy() const {
     return eviction_policy_;
 }
 
+void DKVServer::setTransactionIsolationLevel(TransactionIsolationLevel level) {
+    if (running_) {
+        DKV_LOG_WARNING("不能在运行时设置事务隔离等级");
+        return;
+    }
+    transaction_isolation_level_ = level;
+}
+
+TransactionIsolationLevel DKVServer::getTransactionIsolationLevel() const {
+    return transaction_isolation_level_;
+}
+
 void DKVServer::evictKeys() {
     if (!storage_engine_) {
         DKV_LOG_ERROR("存储引擎未初始化，无法执行淘汰策略");
@@ -241,17 +254,17 @@ void DKVServer::evictKeys() {
     }
     
     // 获取存储引擎的所有键
-    std::vector<Key> all_keys = storage_engine_->getAllKeys();
+    vector<Key> all_keys = storage_engine_->getAllKeys();
     
     // 根据不同的淘汰策略选择要淘汰的键
-    std::vector<Key> keys_to_evict;
+    vector<Key> keys_to_evict;
     
     // 目标内存使用量（低于最大内存限制的一定比例）
     size_t target_usage = max_memory_ * 0.8; // 目标内存使用量为最大内存的80%
     size_t current_usage = getMemoryUsage();
     
     // 收集符合条件的键
-    std::vector<Key> eligible_keys;
+    vector<Key> eligible_keys;
     for (const auto& key : all_keys) {
         // 检查键是否满足淘汰条件
         bool eligible = false;
@@ -292,7 +305,7 @@ void DKVServer::evictKeys() {
         case EvictionPolicy::ALLKEYS_LRU:
             // LRU策略：淘汰最后访问时间最早的键
             {
-                std::sort(eligible_keys.begin(), eligible_keys.end(), [this](const Key& a, const Key& b) {
+                sort(eligible_keys.begin(), eligible_keys.end(), [this](const Key& a, const Key& b) {
                     return storage_engine_->getLastAccessed(a) < storage_engine_->getLastAccessed(b);
                 });
                 break;
@@ -301,7 +314,7 @@ void DKVServer::evictKeys() {
         case EvictionPolicy::ALLKEYS_LFU:
             // LFU策略：淘汰访问频率最低的键
             {
-                std::sort(eligible_keys.begin(), eligible_keys.end(), [this](const Key& a, const Key& b) {
+                sort(eligible_keys.begin(), eligible_keys.end(), [this](const Key& a, const Key& b) {
                     return storage_engine_->getAccessFrequency(a) < storage_engine_->getAccessFrequency(b);
                 });
                 break;
@@ -309,7 +322,7 @@ void DKVServer::evictKeys() {
         case EvictionPolicy::VOLATILE_TTL:
             // TTL策略：淘汰TTL最小的键
             {
-                std::sort(eligible_keys.begin(), eligible_keys.end(), [this](const Key& a, const Key& b) {
+                sort(eligible_keys.begin(), eligible_keys.end(), [this](const Key& a, const Key& b) {
                     return storage_engine_->getExpiration(a) < storage_engine_->getExpiration(b);
                 });
                 break;
@@ -318,7 +331,7 @@ void DKVServer::evictKeys() {
         case EvictionPolicy::ALLKEYS_RANDOM:
             // 随机策略：打乱键的顺序
             {
-                std::random_shuffle(eligible_keys.begin(), eligible_keys.end());
+                random_shuffle(eligible_keys.begin(), eligible_keys.end());
                 break;
             }
         default:
@@ -342,7 +355,7 @@ void DKVServer::evictKeys() {
             
             // 如果启用了AOF持久化，记录DEL命令
             if (enable_aof_ && aof_persistence_) {
-                Command del_cmd(CommandType::DEL, {std::string(key)});
+                Command del_cmd(CommandType::DEL, {string(key)});
                 aof_persistence_->appendCommand(del_cmd);
             }
         }
@@ -356,7 +369,7 @@ void DKVServer::setRDBEnabled(bool enabled) {
     enable_rdb_ = enabled;
 }
 
-void DKVServer::setRDBFilename(const std::string& filename) {
+void DKVServer::setRDBFilename(const string& filename) {
     rdb_filename_ = filename;
 }
 
@@ -373,11 +386,11 @@ void DKVServer::setAOFEnabled(bool enabled) {
     enable_aof_ = enabled;
 }
 
-void DKVServer::setAOFFilename(const std::string& filename) {
+void DKVServer::setAOFFilename(const string& filename) {
     aof_filename_ = filename;
 }
 
-void DKVServer::setAOFFsyncPolicy(const std::string& policy) {
+void DKVServer::setAOFFsyncPolicy(const string& policy) {
     aof_fsync_policy_ = policy;
 }
 
@@ -390,7 +403,7 @@ bool DKVServer::rewriteAOF() {
     DKV_LOG_INFO("开始执行AOF重写");
     
     // 生成临时文件名
-    std::string temp_filename = aof_filename_ + ".tmp";
+    string temp_filename = aof_filename_ + ".tmp";
     
     // 执行AOF重写
     if (aof_persistence_->rewrite(storage_engine_.get(), temp_filename)) {
@@ -407,25 +420,84 @@ bool DKVServer::initialize() {
     
     // 创建存储引擎实例
     DKV_LOG_DEBUG("创建存储引擎实例");
-    storage_engine_ = std::make_unique<StorageEngine>();
+    storage_engine_ = make_unique<StorageEngine>();
+    
+    // 创建事务管理器并集成到存储引擎
+    DKV_LOG_DEBUG("创建事务管理器，隔离级别: ", static_cast<int>(transaction_isolation_level_));
+    transaction_manager_ = make_unique<TransactionManager>(storage_engine_.get(), transaction_isolation_level_);
+    storage_engine_->setTransactionManager(transaction_manager_.get());
     
     // 创建工作线程池
     DKV_LOG_DEBUG("创建工作线程池，线程数: ", num_workers_);
-    worker_pool_ = std::make_unique<WorkerThreadPool>(this, num_workers_);
+    worker_pool_ = make_unique<WorkerThreadPool>(this, num_workers_);
 
     // 创建网络服务实例（使用多线程Reactor模式）
     DKV_LOG_DEBUG("创建网络服务实例，端口: ", port_, ", SubReactor数量: ", num_sub_reactors_);
-    network_server_ = std::make_unique<NetworkServer>(worker_pool_.get(), port_, num_sub_reactors_);
+    network_server_ = make_unique<NetworkServer>(worker_pool_.get(), port_, num_sub_reactors_);
 
     // 创建命令处理器
     DKV_LOG_DEBUG("创建命令处理器");
-    command_handler_ = std::make_unique<CommandHandler>(
+    command_handler_ = make_unique<CommandHandler>(
         storage_engine_.get(), 
         nullptr, // AOF持久化稍后初始化
         enable_aof_);
     
     DKV_LOG_INFO("DKV服务器初始化完成");
     return true;
+}
+
+Response DKVServer::executeCommand(int client_fd, const Command& command) {
+    int tx_id = -1;
+    {
+        shared_lock<shared_mutex> readlock_client_transaction_ids_(transaction_mutex_);
+        auto it = client_transaction_ids_.find(client_fd);
+        if (it == client_transaction_ids_.end()) {
+            // 客户端未开启事务，直接执行命令
+            readlock_client_transaction_ids_.unlock();
+            return executeCommand(command);
+        }
+        tx_id = it->second;
+    }
+    // 检查是否是事务命令
+    if (command.type == CommandType::MULTI) {
+        // 开启事务
+        TransactionID tx_id = transaction_manager_->begin();
+        lock_guard writelock_client_transaction_ids_(transaction_mutex_);
+        client_transaction_ids_[client_fd] = tx_id;
+        return Response(ResponseStatus::OK, "OK");
+    } else if (command.type == CommandType::EXEC) {
+        // 提交事务
+        transaction_manager_->commit(tx_id);
+        lock_guard writelock_client_transaction_ids_(transaction_mutex_);
+        client_transaction_ids_.erase(client_fd);
+        return Response(ResponseStatus::OK, "OK");
+    } else if (command.type == CommandType::DISCARD) {
+        // 丢弃事务
+        transaction_manager_->rollback(tx_id);
+        lock_guard writelock_client_transaction_ids_(transaction_mutex_);
+        client_transaction_ids_.erase(client_fd);
+        return Response(ResponseStatus::OK, "OK");
+    }
+    switch (command.type) {
+        case CommandType::FLUSHDB:
+        case CommandType::SHUTDOWN:
+        case CommandType::SAVE:
+        case CommandType::BGSAVE:
+            // 不允许在事务中执行的命令，先自动提交当前事务
+            transaction_manager_->commit(tx_id);
+            return executeCommand(command);
+        default:
+           ; // 正常在事务中执行
+    }
+    switch (transaction_isolation_level_) {
+        case TransactionIsolationLevel::READ_UNCOMMITTED:
+        case TransactionIsolationLevel::READ_COMMITTED:
+        case TransactionIsolationLevel::REPEATABLE_READ:
+        case TransactionIsolationLevel::SERIALIZABLE:
+            break;
+    }
+    // return command_handler_->handleCommand(command, tx_id);
+    return Response(ResponseStatus::ERROR, "TX not implemented");
 }
 
 Response DKVServer::executeCommand(const Command& command) {
@@ -578,7 +650,7 @@ Response DKVServer::executeCommand(const Command& command) {
             response = command_handler_->handleSaveCommand(
                 rdb_filename_);
             if (response.status == ResponseStatus::OK) {
-                last_save_time_ = std::chrono::system_clock::now();
+                last_save_time_ = chrono::system_clock::now();
                 rdb_changes_ = 0;
             }
             break;
@@ -586,11 +658,11 @@ Response DKVServer::executeCommand(const Command& command) {
             response = command_handler_->handleBgSaveCommand(
                 rdb_filename_);
             if (response.status == ResponseStatus::OK) {
-                last_save_time_ = std::chrono::system_clock::now();
+                last_save_time_ = chrono::system_clock::now();
                 rdb_changes_ = 0;
             }
             break;
-        
+
         // 有序集合命令
         case CommandType::ZADD:
             response = command_handler_->handleZAddCommand(command, need_inc_dirty);
@@ -656,7 +728,6 @@ Response DKVServer::executeCommand(const Command& command) {
         case CommandType::PFMERGE:
             response = command_handler_->handlePFMergeCommand(command, need_inc_dirty);
             break;
-        
         default:
             return Response(ResponseStatus::INVALID_COMMAND);
     }
@@ -675,7 +746,7 @@ void DKVServer::cleanupExpiredKeys() {
     while (cleanup_running_) {
         // 使用更短的睡眠时间，以便快速响应停止信号
         for (int i = 0; i < 60 && cleanup_running_; ++i) {
-            std::this_thread::sleep_for(std::chrono::seconds(1));
+            this_thread::sleep_for(chrono::seconds(1));
         }
         
         if (cleanup_running_ && storage_engine_) {
@@ -685,36 +756,36 @@ void DKVServer::cleanupExpiredKeys() {
     }
 }
 
-bool DKVServer::parseConfigFile(const std::string& config_file) {
-    std::ifstream file(config_file);
+bool DKVServer::parseConfigFile(const string& config_file) {
+    ifstream file(config_file);
     if (!file.is_open()) {
         DKV_LOG_ERROR("无法打开配置文件: ", config_file);
         return false;
     }
     
-    std::string line;
-    while (std::getline(file, line)) {
+    string line;
+    while (getline(file, line)) {
         // 跳过注释和空行
         if (line.empty() || line[0] == '#') {
             continue;
         }
         
-        std::istringstream iss(line);
-        std::string key, value;
+        istringstream iss(line);
+        string key, value;
         
         if (iss >> key >> value) {
             if (key == "port") {
-                port_ = std::stoi(value);
+                port_ = stoi(value);
             } else if (key == "maxmemory") {
-                max_memory_ = std::stoull(value);
+                max_memory_ = stoull(value);
             } else if (key == "enable_rdb") {
                 enable_rdb_ = (value == "yes" || value == "true" || value == "1");
             } else if (key == "rdb_filename") {
                 rdb_filename_ = value;
             } else if (key == "rdb_save_interval") {
-                rdb_save_interval_ = std::stoull(value);
+                rdb_save_interval_ = stoull(value);
             } else if (key == "rdb_save_changes") {
-                rdb_save_changes_ = std::stoull(value);
+                rdb_save_changes_ = stoull(value);
             } else if (key == "enable_aof") {
                 enable_aof_ = (value == "yes" || value == "true" || value == "1");
             } else if (key == "aof_filename") {
@@ -722,16 +793,16 @@ bool DKVServer::parseConfigFile(const std::string& config_file) {
             } else if (key == "aof_fsync_policy") {
                 aof_fsync_policy_ = value;
             } else if (key == "auto_aof_rewrite_percentage") {
-                auto_aof_rewrite_percentage_ = std::stoi(value);
+                auto_aof_rewrite_percentage_ = stoi(value);
             } else if (key == "auto_aof_rewrite_min_size") {
                 // 处理大小单位，支持mb、gb等
-                std::string size_str = value;
-                std::string unit = "";
+                string size_str = value;
+                string unit = "";
                 int multiplier = 1;
                 
                 if (size_str.length() > 2) {
                     unit = size_str.substr(size_str.length() - 2);
-                    std::transform(unit.begin(), unit.end(), unit.begin(), ::tolower);
+                    transform(unit.begin(), unit.end(), unit.begin(), ::tolower);
                     
                     if (unit == "mb") {
                         multiplier = 1024 * 1024;
@@ -741,12 +812,22 @@ bool DKVServer::parseConfigFile(const std::string& config_file) {
                         size_str = size_str.substr(0, size_str.length() - 2);
                     }
                 }
-                
-                auto_aof_rewrite_min_size_ = std::stoi(size_str) * multiplier;
+                auto_aof_rewrite_min_size_ = stoi(size_str) * multiplier;
+            } else if (key == "transaction_isolation_level") {
+                // 事务隔离等级配置
+                transform(value.begin(), value.end(), value.begin(), ::tolower);
+                if (value == "read_uncommitted") {
+                    transaction_isolation_level_ = TransactionIsolationLevel::READ_UNCOMMITTED;
+                } else if (value == "read_committed") {
+                    transaction_isolation_level_ = TransactionIsolationLevel::READ_COMMITTED;
+                } else if (value == "repeatable_read") {
+                    transaction_isolation_level_ = TransactionIsolationLevel::REPEATABLE_READ;
+                } else if (value == "serializable") {
+                    transaction_isolation_level_ = TransactionIsolationLevel::SERIALIZABLE;
+                }
             }
         }
     }
-    
     return true;
 }
 
@@ -761,16 +842,16 @@ void DKVServer::incDirty(int delta) {
 void DKVServer::rdbAutoSaveThread() {
     // 实现自动保存线程逻辑
     while (running_) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        this_thread::sleep_for(chrono::milliseconds(100));
         
         if (!enable_rdb_ || rdb_save_running_ || rdb_save_interval_ <= 0) {
             continue;
         }
         
-        auto now = std::chrono::system_clock::now();
-        auto now_seconds = std::chrono::duration_cast<std::chrono::seconds>(
+        auto now = chrono::system_clock::now();
+        auto now_seconds = chrono::duration_cast<chrono::seconds>(
             now.time_since_epoch()).count();
-        auto last_save_seconds = std::chrono::duration_cast<std::chrono::seconds>(
+        auto last_save_seconds = chrono::duration_cast<chrono::seconds>(
             last_save_time_.load().time_since_epoch()).count();
         
         // 检查是否达到自动保存条件

@@ -4,26 +4,21 @@
 namespace dkv {
 
 Transaction::Transaction(TransactionID transaction_id)
-    : active_(true), transaction_id_(transaction_id)  {
+    : transaction_id_(transaction_id)  {
     start_timestamp_ = Utils::getCurrentTime();
-    // DKV_LOG_INFO("Transaction {} began at timestamp: {}", transaction_id_, start_timestamp_.time_since_epoch());
+    // DKV_LOG_INFO("Transaction {} created at timestamp: {}", transaction_id_, start_timestamp_.time_since_epoch());
 }
 
 Transaction::~Transaction() {
-    if (active_) {
-        // 如果析构时事务仍处于活跃状态，自动回滚
-        DKV_LOG_WARNING("Active transaction being destructed, rolling back...");
-        // rollback();
-    }
 }
 
-void Transaction::deactivate() {
-    if (!active_) {
-        DKV_LOG_ERROR("Cannot deactivate inactive transaction");
-        return;
-    }
-    active_ = false;
-    // DKV_LOG_INFO("Transaction {} deactivated at timestamp: {}", transaction_id_, start_timestamp_.time_since_epoch());
+void Transaction::push_version(const std::string& key, DataItem* item) {
+    versions_.push_back({key, item});
 }
+
+const std::vector<TransactionRecordVersion>& Transaction::get_versions() const {
+    return versions_;
+}
+
 
 } // namespace dkv

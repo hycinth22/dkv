@@ -5,116 +5,20 @@
 #include "dkv_memory_allocator.hpp"
 #include "dkv_rdb.hpp"
 #include "dkv_transaction_manager.hpp"
+#include "storage/dkv_inner_storage.h"
+#include "storage/dkv_simple_storage.h"
+#include "storage/dkv_mvcc_storage.h"
 #include <unordered_map>
 #include <shared_mutex>
 #include <memory>
 
 namespace dkv {
 
-// 调用InnerStorage的任何方法前需要确保已持有锁
-class InnerStorage {
-private:
-    // 使用读写锁保护数据访问
-    mutable std::shared_mutex mutex_;
-    std::unordered_map<Key, std::unique_ptr<DataItem>> data_;
-
-public:
-    InnerStorage() = default;
-    ~InnerStorage() = default;
-
-    // 禁止拷贝和移动
-    InnerStorage(const InnerStorage&) = delete;
-    InnerStorage& operator=(const InnerStorage&) = delete;
-    InnerStorage(InnerStorage&&) = delete;
-    InnerStorage& operator=(InnerStorage&&) = delete;
-
-    // 获取数据项
-    std::unique_ptr<DataItem>& getRefOrInsert(const Key& key) {
-        auto it = data_.find(key);
-        if (it == data_.end()) {
-            data_[key] = std::unique_ptr<DataItem>(nullptr);
-        }
-        return data_[key];
-    }
-    DataItem* get(const Key& key) const {
-        auto it = data_.find(key);
-        if (it != data_.end()) {
-            return it->second.get();
-        }
-        return nullptr;
-    }
-
-    // 设置数据项
-    bool set(const Key& key, std::unique_ptr<DataItem> item) {
-        data_[key] = std::move(item);
-        return true;
-    }
-
-    // 删除数据项
-    bool del(const Key& key) {
-        return data_.erase(key) > 0;
-    }
-
-    // 检查数据项是否存在
-    bool exists(const Key& key) {
-        return data_.find(key) != data_.end();
-    }
-
-    // 获取所有键
-    std::vector<Key> getAllKeys() const {
-        std::vector<Key> keys;
-        keys.reserve(data_.size());
-        for (const auto& pair : data_) {
-            keys.push_back(pair.first);
-        }
-        return keys;
-    }
-
-    // 清空存储
-    void clear() {
-        data_.clear();
-    }
-
-    // 获取大小
-    size_t size() const {
-        return data_.size();
-    }
-
-    std::unordered_map<Key, std::unique_ptr<DataItem>>::const_iterator find(const Key& key) const {
-        return data_.find(key);
-    }
-    std::unordered_map<Key, std::unique_ptr<DataItem>>::const_iterator begin() const {
-        return data_.end();
-    }
-    std::unordered_map<Key, std::unique_ptr<DataItem>>::const_iterator end() const {
-        return data_.end();
-    }
-    std::unique_ptr<DataItem>& operator[](const Key& key) {
-        return data_[key];
-    }
-    std::unordered_map<Key, std::unique_ptr<DataItem>>::iterator erase(std::unordered_map<Key, std::unique_ptr<DataItem>>::iterator it) {
-        return data_.erase(it);
-    }
-    std::unordered_map<Key, std::unique_ptr<DataItem>>::iterator erase(std::unordered_map<Key, std::unique_ptr<DataItem>>::const_iterator it) {
-        return data_.erase(it);
-    }
-    std::pair<std::unordered_map<Key, std::unique_ptr<DataItem>>::iterator, bool> insert_or_assign(const Key& key, std::unique_ptr<DataItem> item) {
-        return data_.insert_or_assign(key, std::move(item));
-    }
-
-    // 锁操作方法
-    std::unique_lock<std::shared_mutex> wlock() const;
-    std::shared_lock<std::shared_mutex> rlock() const;
-    std::unique_lock<std::shared_mutex> wlock_deferred() const;
-    std::shared_lock<std::shared_mutex> rlock_deferred() const;
-    std::shared_mutex& getMutex() const;
-};
-
 // 存储引擎
 class StorageEngine {
 private:
-    // 内部存储
-    InnerStorage inner_storage_;
+    // 内部存储（使用接口以支持不同实现）
+    std::unique_ptr<IInnerStorage> inner_storage_;
     
     // 统计信息
     std::atomic<uint64_t> total_keys_{0};
@@ -123,7 +27,7 @@ private:
     // 内存使用统计
     std::atomic<size_t> memory_usage_;
 
-    TransactionManager transaction_manager_;
+    TransactionManager* transaction_manager_; // 事务管理器
     
     // 获取内存使用量
     size_t getCurrentMemoryUsage() const;
@@ -135,8 +39,8 @@ private:
     std::string getMemoryStats() const;
 
 public:
-    StorageEngine(TransactionIsolationLevel tx_isolation_level = TransactionIsolationLevel::READ_COMMITTED) 
-    : transaction_manager_(this, tx_isolation_level) {}
+    // 构造函数
+    StorageEngine(TransactionIsolationLevel tx_isolation_level = TransactionIsolationLevel::READ_COMMITTED);
     ~StorageEngine() = default;
     
     // 禁止拷贝和移动
@@ -144,6 +48,11 @@ public:
     StorageEngine& operator=(const StorageEngine&) = delete;
     StorageEngine(StorageEngine&&) = delete;
     StorageEngine& operator=(StorageEngine&&) = delete;
+    
+    // 设置事务管理器
+    void setTransactionManager(TransactionManager* manager) {
+        transaction_manager_ = manager;
+    }
 
     // 基本操作
     bool set(const Key& key, const Value& value);

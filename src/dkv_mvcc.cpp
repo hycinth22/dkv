@@ -1,4 +1,4 @@
-#include "dkv_storage_mvcc.hpp"
+#include "dkv_mvcc.hpp"
 #include "dkv_storage.hpp"
 #include "dkv_logger.hpp"
 #include <vector>
@@ -13,7 +13,7 @@ namespace dkv {
 // MVCC类，提供多版本并发控制
 
 // 获取指定事务可见的版本
-DataItem* MVCC::get(ReadView& read_view, const Key& key) {
+DataItem* MVCC::get(ReadView& read_view, const Key& key) const{
     auto readlock = inner_storage_.rlock();
     // 查找键
     auto it = inner_storage_.find(key);
@@ -25,13 +25,13 @@ DataItem* MVCC::get(ReadView& read_view, const Key& key) {
     DKV_LOG_DEBUG("latest version for key ", key, " is writeen by tx ", entry->getTransactionId());
 
     // 检查事务可见性
-    if (!read_view.isVisible(entry->getTransactionId())) {
+    if (!read_view.isVisible(entry->getTransactionId()) && !entry->isDeleted()) {
         // 最新版本对事务不可见，需要找历史版本
         DKV_LOG_DEBUG("Lookup history version for key:", key, " with read_view: ", read_view);
         UndoLog *undo_log = entry->getUndoLog().get();
         assert(undo_log->old_value != nullptr && "undo_log->old_value should not be nullptr");
         while(undo_log != nullptr) {
-            if (read_view.isVisible(undo_log->old_value->getTransactionId())) {
+            if (!read_view.isVisible(undo_log->old_value->getTransactionId()) && !undo_log->old_value->isDeleted()) {
                 break;
             } else {
                 DKV_LOG_DEBUG("history version ", undo_log->old_value->getTransactionId(), " is not visible", key);
@@ -80,9 +80,9 @@ bool MVCC::set(TransactionID tx_id, const Key& key, unique_ptr<DataItem> item) {
 }
 
 // 删除键，并记录到UNDOLOG
-bool MVCC::del(TransactionID tx_id, const Key& key, unique_ptr<DataItem> virtual_item) {
+bool MVCC::del(TransactionID tx_id, const Key& key) {
     auto writelock = inner_storage_.wlock();
-    
+
     unique_ptr<DataItem>& entry = inner_storage_.getRefOrInsert(key);
 
     // 保存旧值到UndoLog
@@ -91,10 +91,11 @@ bool MVCC::del(TransactionID tx_id, const Key& key, unique_ptr<DataItem> virtual
     new_undo_log->old_value = move(entry);
 
     // 删除键
+    unique_ptr<DataItem> virtual_item = entry->clone();
+    virtual_item->setTransactionId(tx_id);
+    virtual_item->setDeleted(true);
+    virtual_item->setUndoLog(move(new_undo_log));
     entry = move(virtual_item);
-    entry->setTransactionId(tx_id);
-    entry->setDeleted(true);
-    entry->setUndoLog(move(new_undo_log));
     return true;
 }
 
@@ -102,7 +103,11 @@ bool MVCC::del(TransactionID tx_id, const Key& key, unique_ptr<DataItem> virtual
 ReadView MVCC::createReadView(TransactionID tx_id, TransactionManager& txm) {
     ReadView read_view;
     read_view.creator = tx_id;
-    read_view.actives = txm.getActiveTransactions();
+    const auto& actives = txm.getActiveTransactions();
+    const auto& rolledback = txm.getRolledbackTransactions();
+    read_view.actives.reserve(actives.size() + rolledback.size());
+    read_view.actives.insert(read_view.actives.end(), actives.begin(), actives.end());
+    read_view.actives.insert(read_view.actives.end(), rolledback.begin(), rolledback.end());
     auto pmin = min_element(read_view.actives.begin(), read_view.actives.end());
     read_view.low = (pmin != read_view.actives.end() ? *pmin : 0);
     read_view.high = txm.peekNextTransactionID();
