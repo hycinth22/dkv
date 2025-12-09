@@ -94,6 +94,7 @@ void testServerManagement(dkv::TestRunner& runner) {
 }
 
 int main() {
+    dkv::setSignalHandler();
     try {
         dkv::TestRunner runner;
         

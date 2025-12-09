@@ -9,11 +9,11 @@
 
 namespace dkv {
 
-CommandHandler::CommandHandler(StorageEngine* storage_engine, AOFPersistence* aof_persistence, bool enable_aof)
-    : storage_engine_(storage_engine), aof_persistence_(aof_persistence), enable_aof_(enable_aof) {
+CommandHandler::CommandHandler(StorageEngine* storage_engine, AOFPersistence* aof_persistence, bool enable_aof, TransactionManager* transaction_manager)
+    : storage_engine_(storage_engine), aof_persistence_(aof_persistence), enable_aof_(enable_aof), transaction_manager_(transaction_manager) {
 }
 
-Response CommandHandler::handleSetCommand(const Command& command, bool& need_inc_dirty) {
+Response CommandHandler::handleSetCommand(TransactionID tx_id, const Command& command, bool& need_inc_dirty) {
     if (command.args.size() < 2) {
         return Response(ResponseStatus::ERROR, "SET命令需要至少2个参数");
     }
@@ -26,7 +26,7 @@ Response CommandHandler::handleSetCommand(const Command& command, bool& need_inc
         // 支持 PX 参数设置毫秒过期时间
         try {
             int64_t ms = std::stoll(command.args[3]);
-            success = storage_engine_->set(key, value, ms / 1000);
+            success = storage_engine_->set(tx_id, key, value, ms / 1000);
             DKV_LOG_DEBUG("设置键 ", key.c_str(), " 带有过期时间 ", ms, " 毫秒");
         } catch (const std::invalid_argument&) {
             return Response(ResponseStatus::ERROR, "无效的过期时间");
@@ -35,13 +35,13 @@ Response CommandHandler::handleSetCommand(const Command& command, bool& need_inc
         // 支持 EX 参数设置秒过期时间
         try {
             int64_t seconds = std::stoll(command.args[3]);
-            success = storage_engine_->set(key, value, seconds);
+            success = storage_engine_->set(tx_id, key, value, seconds);
             DKV_LOG_DEBUG("设置键 ", key.c_str(), " 带有过期时间 ", seconds, " 秒");
         } catch (const std::invalid_argument&) {
             return Response(ResponseStatus::ERROR, "无效的过期时间");
         }
     } else {
-        success = storage_engine_->set(key, value);
+        success = storage_engine_->set(tx_id, key, value);
         DKV_LOG_DEBUG("设置键 ", key.c_str());
     }
     
@@ -54,13 +54,13 @@ Response CommandHandler::handleSetCommand(const Command& command, bool& need_inc
     }
 }
 
-Response CommandHandler::handleGetCommand(const Command& command) {
+Response CommandHandler::handleGetCommand(TransactionID tx_id, const Command& command) {
     if (command.args.empty()) {
         return Response(ResponseStatus::ERROR, "GET命令需要1个参数");
     }
     std::string key = command.args[0];
     DKV_LOG_DEBUG("获取键 ", key.c_str(), " 的值");
-    std::string value = storage_engine_->get(key);
+    std::string value = storage_engine_->get(tx_id, key);
     if (value.empty()) {
         DKV_LOG_DEBUG("键 ", key.c_str(), " 不存在");
         return Response(ResponseStatus::NOT_FOUND);
@@ -69,14 +69,14 @@ Response CommandHandler::handleGetCommand(const Command& command) {
     return Response(ResponseStatus::OK, "", value);
 }
 
-Response CommandHandler::handleDelCommand(const Command& command, bool& need_inc_dirty) {
+Response CommandHandler::handleDelCommand(TransactionID tx_id, const Command& command, bool& need_inc_dirty) {
     if (command.args.empty()) {
         return Response(ResponseStatus::ERROR, "DEL命令需要至少1个参数");
     }
     
     int deleted_count = 0;
     for (const auto& key : command.args) {
-        bool success = storage_engine_->del(key);
+        bool success = storage_engine_->del(tx_id, key);
         if (success) {
             deleted_count++;
             need_inc_dirty = true;
@@ -89,14 +89,14 @@ Response CommandHandler::handleDelCommand(const Command& command, bool& need_inc
     return Response(ResponseStatus::OK, "", std::to_string(deleted_count));
 }
 
-Response CommandHandler::handleExistsCommand(const Command& command) {
+Response CommandHandler::handleExistsCommand(TransactionID tx_id, const Command& command) {
     if (command.args.empty()) {
         return Response(ResponseStatus::ERROR, "EXISTS命令需要至少1个参数");
     }
     
     int exists_count = 0;
     for (const auto& key : command.args) {
-        if (storage_engine_->exists(key)) {
+        if (storage_engine_->exists(tx_id, key)) {
             exists_count++;
         }
     }
@@ -104,31 +104,31 @@ Response CommandHandler::handleExistsCommand(const Command& command) {
     return Response(ResponseStatus::OK, "", std::to_string(exists_count));
 }
 
-Response CommandHandler::handleIncrCommand(const Command& command, bool& need_inc_dirty) {
+Response CommandHandler::handleIncrCommand(TransactionID tx_id, const Command& command, bool& need_inc_dirty) {
     if (command.args.empty()) {
         return Response(ResponseStatus::ERROR, "INCR命令需要1个参数");
     }
-    int64_t value = storage_engine_->incr(command.args[0]);
+    int64_t value = storage_engine_->incr(tx_id, command.args[0]);
     need_inc_dirty = true;
     return Response(ResponseStatus::OK, "", std::to_string(value));
 }
 
-Response CommandHandler::handleDecrCommand(const Command& command, bool& need_inc_dirty) {
+Response CommandHandler::handleDecrCommand(TransactionID tx_id, const Command& command, bool& need_inc_dirty) {
     if (command.args.empty()) {
         return Response(ResponseStatus::ERROR, "DECR命令需要1个参数");
     }
-    int64_t value = storage_engine_->decr(command.args[0]);
+    int64_t value = storage_engine_->decr(tx_id, command.args[0]);
     need_inc_dirty = true;
     return Response(ResponseStatus::OK, "", std::to_string(value));
 }
 
-Response CommandHandler::handleExpireCommand(const Command& command, bool& need_inc_dirty) {
+Response CommandHandler::handleExpireCommand(TransactionID tx_id, const Command& command, bool& need_inc_dirty) {
     if (command.args.size() < 2) {
         return Response(ResponseStatus::ERROR, "EXPIRE命令需要2个参数");
     }
     try {
         int64_t seconds = std::stoll(command.args[1]);
-        bool success = storage_engine_->expire(command.args[0], seconds);
+        bool success = storage_engine_->expire(tx_id, command.args[0], seconds);
         
         if (success) {
             need_inc_dirty = true;
@@ -141,16 +141,16 @@ Response CommandHandler::handleExpireCommand(const Command& command, bool& need_
     }
 }
 
-Response CommandHandler::handleTtlCommand(const Command& command) {
+Response CommandHandler::handleTtlCommand(TransactionID tx_id, const Command& command) {
     if (command.args.empty()) {
         return Response(ResponseStatus::ERROR, "TTL命令需要1个参数");
     }
-    int64_t ttl = storage_engine_->ttl(command.args[0]);
+    int64_t ttl = storage_engine_->ttl(tx_id, command.args[0]);
     return Response(ResponseStatus::OK, "", std::to_string(ttl));
 }
 
 // 哈希命令处理
-Response CommandHandler::handleHSetCommand(const Command& command, bool& need_inc_dirty) {
+Response CommandHandler::handleHSetCommand(TransactionID tx_id, const Command& command, bool& need_inc_dirty) {
     if (command.args.size() < 3 || command.args.size() % 2 == 0) {
         return Response(ResponseStatus::ERROR, "HSET命令需要奇数个参数(至少3个)");
     }
@@ -163,7 +163,7 @@ Response CommandHandler::handleHSetCommand(const Command& command, bool& need_in
         const std::string& field = command.args[i];
         const std::string& value = command.args[i + 1];
         
-        bool success = storage_engine_->hset(key, field, value);
+        bool success = storage_engine_->hset(tx_id, key, field, value);
         if (success) {
             added_count++;
             need_inc_dirty = true;
@@ -173,22 +173,22 @@ Response CommandHandler::handleHSetCommand(const Command& command, bool& need_in
     return Response(ResponseStatus::OK, "", std::to_string(added_count));
 }
 
-Response CommandHandler::handleHGetCommand(const Command& command) {
+Response CommandHandler::handleHGetCommand(TransactionID tx_id, const Command& command) {
     if (command.args.size() < 2) {
         return Response(ResponseStatus::ERROR, "HGET命令需要至少2个参数");
     }
-    std::string value = storage_engine_->hget(command.args[0], command.args[1]);
+    std::string value = storage_engine_->hget(tx_id, command.args[0], command.args[1]);
     if (value.empty()) {
         return Response(ResponseStatus::NOT_FOUND);
     }
     return Response(ResponseStatus::OK, "", value);
 }
 
-Response CommandHandler::handleHGetAllCommand(const Command& command) {
+Response CommandHandler::handleHGetAllCommand(TransactionID tx_id, const Command& command) {
     if (command.args.empty()) {
         return Response(ResponseStatus::ERROR, "HGETALL命令需要1个参数");
     }
-    std::vector<std::pair<Value, Value>> all = storage_engine_->hgetall(command.args[0]);
+    std::vector<std::pair<Value, Value>> all = storage_engine_->hgetall(tx_id, command.args[0]);
     
     // 将结果转换为RESP协议数组格式
     std::vector<std::string> result;
@@ -203,7 +203,7 @@ Response CommandHandler::handleHGetAllCommand(const Command& command) {
     return response;
 }
 
-Response CommandHandler::handleHDeldCommand(const Command& command, bool& need_inc_dirty) {
+Response CommandHandler::handleHDeldCommand(TransactionID tx_id, const Command& command, bool& need_inc_dirty) {
     if (command.args.size() < 2) {
         return Response(ResponseStatus::ERROR, "HDEL命令需要至少2个参数");
     }
@@ -212,7 +212,7 @@ Response CommandHandler::handleHDeldCommand(const Command& command, bool& need_i
     
     for (size_t i = 1; i < command.args.size(); ++i) {
         const Value& field = command.args[i];
-        bool success = storage_engine_->hdel(key, field);
+        bool success = storage_engine_->hdel(tx_id, key, field);
         if (success) {
             deleted_count++;
             need_inc_dirty = true;
@@ -222,19 +222,19 @@ Response CommandHandler::handleHDeldCommand(const Command& command, bool& need_i
     return Response(ResponseStatus::OK, "", std::to_string(deleted_count));
 }
 
-Response CommandHandler::handleHExistsCommand(const Command& command) {
+Response CommandHandler::handleHExistsCommand(TransactionID tx_id, const Command& command) {
     if (command.args.size() < 2) {
         return Response(ResponseStatus::ERROR, "HEXISTS命令需要至少2个参数");
     }
-    bool exists = storage_engine_->hexists(command.args[0], command.args[1]);
+    bool exists = storage_engine_->hexists(tx_id, command.args[0], command.args[1]);
     return Response(ResponseStatus::OK, "", exists ? "1" : "0");
 }
 
-Response CommandHandler::handleHKeysCommand(const Command& command) {
+Response CommandHandler::handleHKeysCommand(TransactionID tx_id, const Command& command) {
     if (command.args.empty()) {
         return Response(ResponseStatus::ERROR, "HKEYS命令需要1个参数");
     }
-    std::vector<Value> keys = storage_engine_->hkeys(command.args[0]);
+    std::vector<Value> keys = storage_engine_->hkeys(tx_id, command.args[0]);
     
     Response response;
     response.status = ResponseStatus::OK;
@@ -242,11 +242,11 @@ Response CommandHandler::handleHKeysCommand(const Command& command) {
     return response;
 }
 
-Response CommandHandler::handleHValsCommand(const Command& command) {
+Response CommandHandler::handleHValsCommand(TransactionID tx_id, const Command& command) {
     if (command.args.empty()) {
         return Response(ResponseStatus::ERROR, "HVALS命令需要1个参数");
     }
-    std::vector<Value> values = storage_engine_->hvals(command.args[0]);
+    std::vector<Value> values = storage_engine_->hvals(tx_id, command.args[0]);
     
     Response response;
     response.status = ResponseStatus::OK;
@@ -254,16 +254,16 @@ Response CommandHandler::handleHValsCommand(const Command& command) {
     return response;
 }
 
-Response CommandHandler::handleHLenCommand(const Command& command) {
+Response CommandHandler::handleHLenCommand(TransactionID tx_id, const Command& command) {
     if (command.args.empty()) {
         return Response(ResponseStatus::ERROR, "HLEN命令需要1个参数");
     }
-    size_t len = storage_engine_->hlen(command.args[0]);
+    size_t len = storage_engine_->hlen(tx_id, command.args[0]);
     return Response(ResponseStatus::OK, "", std::to_string(len));
 }
 
 // 列表命令处理
-Response CommandHandler::handleLPushCommand(const Command& command, bool& need_inc_dirty) {
+Response CommandHandler::handleLPushCommand(TransactionID tx_id, const Command& command, bool& need_inc_dirty) {
     if (command.args.size() < 2) {
         return Response(ResponseStatus::ERROR, "LPUSH命令需要至少2个参数");
     }
@@ -272,14 +272,14 @@ Response CommandHandler::handleLPushCommand(const Command& command, bool& need_i
     
     // 处理多个值参数
     for (size_t i = 1; i < command.args.size(); ++i) {
-        len = storage_engine_->lpush(key, command.args[i]);
+        len = storage_engine_->lpush(tx_id, key, command.args[i]);
     }
     
     need_inc_dirty = true;
     return Response(ResponseStatus::OK, "", std::to_string(len));
 }
 
-Response CommandHandler::handleRPushCommand(const Command& command, bool& need_inc_dirty) {
+Response CommandHandler::handleRPushCommand(TransactionID tx_id, const Command& command, bool& need_inc_dirty) {
     if (command.args.size() < 2) {
         return Response(ResponseStatus::ERROR, "RPUSH命令需要至少2个参数");
     }
@@ -288,14 +288,14 @@ Response CommandHandler::handleRPushCommand(const Command& command, bool& need_i
     
     // 处理多个值参数
     for (size_t i = 1; i < command.args.size(); ++i) {
-        len = storage_engine_->rpush(key, command.args[i]);
+        len = storage_engine_->rpush(tx_id, key, command.args[i]);
     }
     
     need_inc_dirty = true;
     return Response(ResponseStatus::OK, "", std::to_string(len));
 }
 
-Response CommandHandler::handleLPopCommand(const Command& command, bool& need_inc_dirty) {
+Response CommandHandler::handleLPopCommand(TransactionID tx_id, const Command& command, bool& need_inc_dirty) {
     if (command.args.empty()) {
         return Response(ResponseStatus::ERROR, "LPOP命令需要至少1个参数");
     }
@@ -304,7 +304,7 @@ Response CommandHandler::handleLPopCommand(const Command& command, bool& need_in
     
     // 只有键参数的情况 - 返回单个元素
     if (command.args.size() == 1) {
-        std::string value = storage_engine_->lpop(key);
+        std::string value = storage_engine_->lpop(tx_id, key);
         if (value.empty()) {
             return Response(ResponseStatus::NOT_FOUND);
         }
@@ -319,7 +319,7 @@ Response CommandHandler::handleLPopCommand(const Command& command, bool& need_in
         std::vector<std::string> values;
         
         for (size_t i = 0; i < count; ++i) {
-            std::string value = storage_engine_->lpop(key);
+            std::string value = storage_engine_->lpop(tx_id, key);
             if (value.empty()) {
                 break;  // 列表为空，停止弹出
             }
@@ -343,7 +343,7 @@ Response CommandHandler::handleLPopCommand(const Command& command, bool& need_in
     }
 }
 
-Response CommandHandler::handleRPopCommand(const Command& command, bool& need_inc_dirty) {
+Response CommandHandler::handleRPopCommand(TransactionID tx_id, const Command& command, bool& need_inc_dirty) {
     if (command.args.empty()) {
         return Response(ResponseStatus::ERROR, "RPOP命令需要至少1个参数");
     }
@@ -352,7 +352,7 @@ Response CommandHandler::handleRPopCommand(const Command& command, bool& need_in
     
     // 只有键参数的情况 - 返回单个元素
     if (command.args.size() == 1) {
-        std::string value = storage_engine_->rpop(key);
+        std::string value = storage_engine_->rpop(tx_id, key);
         if (value.empty()) {
             return Response(ResponseStatus::NOT_FOUND);
         }
@@ -367,7 +367,7 @@ Response CommandHandler::handleRPopCommand(const Command& command, bool& need_in
         std::vector<std::string> values;
         
         for (size_t i = 0; i < count; ++i) {
-            std::string value = storage_engine_->rpop(key);
+            std::string value = storage_engine_->rpop(tx_id, key);
             if (value.empty()) {
                 break;  // 列表为空，停止弹出
             }
@@ -391,22 +391,22 @@ Response CommandHandler::handleRPopCommand(const Command& command, bool& need_in
     }
 }
 
-Response CommandHandler::handleLLenCommand(const Command& command) {
+Response CommandHandler::handleLLenCommand(TransactionID tx_id, const Command& command) {
     if (command.args.empty()) {
         return Response(ResponseStatus::ERROR, "LLEN命令需要1个参数");
     }
-    size_t len = storage_engine_->llen(command.args[0]);
+    size_t len = storage_engine_->llen(tx_id, command.args[0]);
     return Response(ResponseStatus::OK, "", std::to_string(len));
 }
 
-Response CommandHandler::handleLRangeCommand(const Command& command) {
+Response CommandHandler::handleLRangeCommand(TransactionID tx_id, const Command& command) {
     if (command.args.size() < 3) {
         return Response(ResponseStatus::ERROR, "LRANGE命令需要至少3个参数");
     }
     try {
         size_t start = std::stoull(command.args[1]);
         size_t stop = std::stoull(command.args[2]);
-        std::vector<Value> values = storage_engine_->lrange(command.args[0], start, stop);
+        std::vector<Value> values = storage_engine_->lrange(tx_id, command.args[0], start, stop);
         
         Response response;
         response.status = ResponseStatus::OK;
@@ -418,12 +418,12 @@ Response CommandHandler::handleLRangeCommand(const Command& command) {
 }
 
 // 集合命令处理
-Response CommandHandler::handleSAddCommand(const Command& command, bool& need_inc_dirty) {
+Response CommandHandler::handleSAddCommand(TransactionID tx_id, const Command& command, bool& need_inc_dirty) {
     if (command.args.size() < 2) {
         return Response(ResponseStatus::ERROR, "SADD命令需要至少2个参数");
     }
     std::vector<Value> members(command.args.begin() + 1, command.args.end());
-    size_t addedCount = storage_engine_->sadd(command.args[0], members);
+    size_t addedCount = storage_engine_->sadd(tx_id, command.args[0], members);
     
     if (addedCount > 0) {
         need_inc_dirty = true;
@@ -432,12 +432,12 @@ Response CommandHandler::handleSAddCommand(const Command& command, bool& need_in
     return Response(ResponseStatus::OK, "", std::to_string(addedCount));
 }
 
-Response CommandHandler::handleSRemCommand(const Command& command, bool& need_inc_dirty) {
+Response CommandHandler::handleSRemCommand(TransactionID tx_id, const Command& command, bool& need_inc_dirty) {
     if (command.args.size() < 2) {
         return Response(ResponseStatus::ERROR, "SREM命令需要至少2个参数");
     }
     std::vector<Value> members(command.args.begin() + 1, command.args.end());
-    size_t removedCount = storage_engine_->srem(command.args[0], members);
+    size_t removedCount = storage_engine_->srem(tx_id, command.args[0], members);
     
     if (removedCount > 0) {
         need_inc_dirty = true;
@@ -446,11 +446,11 @@ Response CommandHandler::handleSRemCommand(const Command& command, bool& need_in
     return Response(ResponseStatus::OK, "", std::to_string(removedCount));
 }
 
-Response CommandHandler::handleSMembersCommand(const Command& command) {
+Response CommandHandler::handleSMembersCommand(TransactionID tx_id, const Command& command) {
     if (command.args.empty()) {
         return Response(ResponseStatus::ERROR, "SMEMBERS命令需要1个参数");
     }
-    std::vector<Value> members = storage_engine_->smembers(command.args[0]);
+    std::vector<Value> members = storage_engine_->smembers(tx_id, command.args[0]);
     
     Response response;
     response.status = ResponseStatus::OK;
@@ -458,24 +458,24 @@ Response CommandHandler::handleSMembersCommand(const Command& command) {
     return response;
 }
 
-Response CommandHandler::handleSIsMemberCommand(const Command& command) {
+Response CommandHandler::handleSIsMemberCommand(TransactionID tx_id, const Command& command) {
     if (command.args.size() < 2) {
         return Response(ResponseStatus::ERROR, "SISMEMBER命令需要至少2个参数");
     }
-    bool is_member = storage_engine_->sismember(command.args[0], command.args[1]);
+    bool is_member = storage_engine_->sismember(tx_id, command.args[0], command.args[1]);
     return Response(ResponseStatus::OK, "", is_member ? "1" : "0");
 }
 
-Response CommandHandler::handleSCardCommand(const Command& command) {
+Response CommandHandler::handleSCardCommand(TransactionID tx_id, const Command& command) {
     if (command.args.empty()) {
         return Response(ResponseStatus::ERROR, "SCARD命令需要1个参数");
     }
-    size_t count = storage_engine_->scard(command.args[0]);
+    size_t count = storage_engine_->scard(tx_id, command.args[0]);
     return Response(ResponseStatus::OK, "", std::to_string(count));
 }
 
 // 有序集合命令处理
-Response CommandHandler::handleZAddCommand(const Command& command, bool& need_inc_dirty) {
+Response CommandHandler::handleZAddCommand(TransactionID tx_id, const Command& command, bool& need_inc_dirty) {
     if (command.args.size() < 3 || command.args.size() % 2 != 1) {
         return Response(ResponseStatus::ERROR, "ZADD命令需要奇数个参数（1个键名 + 多个分数-成员对）");
     }
@@ -491,7 +491,7 @@ Response CommandHandler::handleZAddCommand(const Command& command, bool& need_in
             members_with_scores.push_back({member, score});
         }
         
-        size_t addedCount = storage_engine_->zadd(key, members_with_scores);
+        size_t addedCount = storage_engine_->zadd(tx_id, key, members_with_scores);
         
         if (addedCount > 0) {
             need_inc_dirty = true;
@@ -503,14 +503,14 @@ Response CommandHandler::handleZAddCommand(const Command& command, bool& need_in
     }
 }
 
-Response CommandHandler::handleZRemCommand(const Command& command, bool& need_inc_dirty) {
+Response CommandHandler::handleZRemCommand(TransactionID tx_id, const Command& command, bool& need_inc_dirty) {
     if (command.args.size() < 2) {
         return Response(ResponseStatus::ERROR, "ZREM命令需要至少2个参数");
     }
     
     std::string key = command.args[0];
     std::vector<Value> members(command.args.begin() + 1, command.args.end());
-    size_t removedCount = storage_engine_->zrem(key, members);
+    size_t removedCount = storage_engine_->zrem(tx_id, key, members);
     
     if (removedCount > 0) {
         need_inc_dirty = true;
@@ -519,7 +519,7 @@ Response CommandHandler::handleZRemCommand(const Command& command, bool& need_in
     return Response(ResponseStatus::OK, "", std::to_string(removedCount));
 }
 
-Response CommandHandler::handleZScoreCommand(const Command& command) {
+Response CommandHandler::handleZScoreCommand(TransactionID tx_id, const Command& command) {
     if (command.args.size() < 2) {
         return Response(ResponseStatus::ERROR, "ZSCORE命令需要至少2个参数");
     }
@@ -527,7 +527,7 @@ Response CommandHandler::handleZScoreCommand(const Command& command) {
     std::string key = command.args[0];
     std::string member = command.args[1];
     double score = -1.0;
-    bool found = storage_engine_->zscore(key, member, score);
+    bool found = storage_engine_->zscore(tx_id, key, member, score);
     
     if (!found) {
         return Response(ResponseStatus::NOT_FOUND);
@@ -536,22 +536,23 @@ Response CommandHandler::handleZScoreCommand(const Command& command) {
     return Response(ResponseStatus::OK, "", std::to_string(score));
 }
 
-Response CommandHandler::handleZIsMemberCommand(const Command& command) {
+Response CommandHandler::handleZIsMemberCommand(TransactionID tx_id, const Command& command) {
     if (command.args.size() < 2) {
         return Response(ResponseStatus::ERROR, "ZISMEMBER命令需要至少2个参数");
     }
     
-    bool is_member = storage_engine_->zismember(command.args[0], command.args[1]);
+    bool is_member = storage_engine_->zismember(tx_id, command.args[0], command.args[1]);
     return Response(ResponseStatus::OK, "", is_member ? "1" : "0");
 }
 
-Response CommandHandler::handleZRankCommand(const Command& command) {
+Response CommandHandler::handleZRankCommand(TransactionID tx_id, const Command& command) {
     if (command.args.size() < 2) {
         return Response(ResponseStatus::ERROR, "ZRANK命令需要至少2个参数");
     }
     
     size_t rank = 0;
-    bool found = storage_engine_->zrank(command.args[0], command.args[1], rank);
+    bool found = storage_engine_->zrank(tx_id, command.args[0], command.args[1], rank);
+    
     if (!found) {
         return Response(ResponseStatus::NOT_FOUND);
     }
@@ -559,13 +560,14 @@ Response CommandHandler::handleZRankCommand(const Command& command) {
     return Response(ResponseStatus::OK, "", std::to_string(rank));
 }
 
-Response CommandHandler::handleZRevRankCommand(const Command& command) {
+Response CommandHandler::handleZRevRankCommand(TransactionID tx_id, const Command& command) {
     if (command.args.size() < 2) {
         return Response(ResponseStatus::ERROR, "ZREVRANK命令需要至少2个参数");
     }
     
     size_t rank = 0;
-    bool found = storage_engine_->zrevrank(command.args[0], command.args[1], rank);
+    bool found = storage_engine_->zrevrank(tx_id, command.args[0], command.args[1], rank);
+    
     if (!found) {
         return Response(ResponseStatus::NOT_FOUND);
     }
@@ -573,7 +575,7 @@ Response CommandHandler::handleZRevRankCommand(const Command& command) {
     return Response(ResponseStatus::OK, "", std::to_string(rank));
 }
 
-Response CommandHandler::handleZRangeCommand(const Command& command) {
+Response CommandHandler::handleZRangeCommand(TransactionID tx_id, const Command& command) {
     if (command.args.size() < 3) {
         return Response(ResponseStatus::ERROR, "ZRANGE命令需要至少3个参数");
     }
@@ -584,7 +586,7 @@ Response CommandHandler::handleZRangeCommand(const Command& command) {
         bool withScores = (command.args.size() >= 4 && command.args[3] == "WITHSCORES");
         
         std::vector<std::pair<Value, double>> members = 
-            storage_engine_->zrange(command.args[0], start, stop);
+            storage_engine_->zrange(tx_id, command.args[0], start, stop);
         
         Response response;
         response.status = ResponseStatus::OK;
@@ -610,18 +612,17 @@ Response CommandHandler::handleZRangeCommand(const Command& command) {
     }
 }
 
-Response CommandHandler::handleZRevRangeCommand(const Command& command) {
+Response CommandHandler::handleZRevRangeCommand(TransactionID tx_id, const Command& command) {
     if (command.args.size() < 3) {
         return Response(ResponseStatus::ERROR, "ZREVRANGE命令需要至少3个参数");
     }
-    
     try {
         size_t start = std::stoull(command.args[1]);
         size_t stop = std::stoull(command.args[2]);
         bool withScores = (command.args.size() >= 4 && command.args[3] == "WITHSCORES");
         
         std::vector<std::pair<Value, double>> members = 
-            storage_engine_->zrevrange(command.args[0], start, stop);
+            storage_engine_->zrevrange(tx_id, command.args[0], start, stop);
         
         Response response;
         response.status = ResponseStatus::OK;
@@ -647,7 +648,7 @@ Response CommandHandler::handleZRevRangeCommand(const Command& command) {
     }
 }
 
-Response CommandHandler::handleZRangeByScoreCommand(const Command& command) {
+Response CommandHandler::handleZRangeByScoreCommand(TransactionID tx_id, const Command& command) {
     if (command.args.size() < 3) {
         return Response(ResponseStatus::ERROR, "ZRANGEBYSCORE命令需要至少3个参数");
     }
@@ -658,7 +659,7 @@ Response CommandHandler::handleZRangeByScoreCommand(const Command& command) {
         bool withScores = (command.args.size() >= 4 && command.args[3] == "WITHSCORES");
         
         std::vector<std::pair<Value, double>> members = 
-            storage_engine_->zrangebyscore(command.args[0], min, max);
+            storage_engine_->zrangebyscore(tx_id, command.args[0], min, max);
         
         Response response;
         response.status = ResponseStatus::OK;
@@ -684,7 +685,7 @@ Response CommandHandler::handleZRangeByScoreCommand(const Command& command) {
     }
 }
 
-Response CommandHandler::handleZRevRangeByScoreCommand(const Command& command) {
+Response CommandHandler::handleZRevRangeByScoreCommand(TransactionID tx_id, const Command& command) {
     if (command.args.size() < 3) {
         return Response(ResponseStatus::ERROR, "ZREVRANGEBYSCORE命令需要至少3个参数");
     }
@@ -695,7 +696,7 @@ Response CommandHandler::handleZRevRangeByScoreCommand(const Command& command) {
         bool withScores = (command.args.size() >= 4 && command.args[3] == "WITHSCORES");
         
         std::vector<std::pair<Value, double>> members = 
-            storage_engine_->zrevrangebyscore(command.args[0], max, min);
+            storage_engine_->zrevrangebyscore(tx_id, command.args[0], max, min);
         
         Response response;
         response.status = ResponseStatus::OK;
@@ -721,7 +722,7 @@ Response CommandHandler::handleZRevRangeByScoreCommand(const Command& command) {
     }
 }
 
-Response CommandHandler::handleZCountCommand(const Command& command) {
+Response CommandHandler::handleZCountCommand(TransactionID tx_id, const Command& command) {
     if (command.args.size() < 3) {
         return Response(ResponseStatus::ERROR, "ZCOUNT命令需要至少3个参数");
     }
@@ -729,24 +730,24 @@ Response CommandHandler::handleZCountCommand(const Command& command) {
     try {
         double min = std::stod(command.args[1]);
         double max = std::stod(command.args[2]);
-        size_t count = storage_engine_->zcount(command.args[0], min, max);
+        size_t count = storage_engine_->zcount(tx_id, command.args[0], min, max);
         return Response(ResponseStatus::OK, "", std::to_string(count));
     } catch (const std::invalid_argument&) {
         return Response(ResponseStatus::ERROR, "无效的分数参数");
     }
 }
 
-Response CommandHandler::handleZCardCommand(const Command& command) {
+Response CommandHandler::handleZCardCommand(TransactionID tx_id, const Command& command) {
     if (command.args.empty()) {
         return Response(ResponseStatus::ERROR, "ZCARD命令需要1个参数");
     }
     
-    size_t count = storage_engine_->zcard(command.args[0]);
+    size_t count = storage_engine_->zcard(tx_id, command.args[0]);
     return Response(ResponseStatus::OK, "", std::to_string(count));
 }
 
 // 位图命令处理
-Response CommandHandler::handleSetBitCommand(const Command& command, bool& need_inc_dirty) {
+Response CommandHandler::handleSetBitCommand(TransactionID tx_id, const Command& command, bool& need_inc_dirty) {
     if (command.args.size() < 3) {
         return Response(ResponseStatus::ERROR, "SETBIT命令需要至少3个参数");
     }
@@ -755,8 +756,8 @@ Response CommandHandler::handleSetBitCommand(const Command& command, bool& need_
         uint64_t offset = std::stoull(command.args[1]);
         int bit = std::stoi(command.args[2]);
         
-        bool oldBit = storage_engine_->getBit(key, offset);
-        storage_engine_->setBit(key, offset, bit != 0);
+        bool oldBit = storage_engine_->getBit(tx_id, key, offset);
+        storage_engine_->setBit(tx_id, key, offset, bit != 0);
         need_inc_dirty = true;
         return Response(ResponseStatus::OK, "", std::to_string(oldBit ? 1 : 0));
     } catch (const std::invalid_argument&) {
@@ -764,7 +765,7 @@ Response CommandHandler::handleSetBitCommand(const Command& command, bool& need_
     }
 }
 
-Response CommandHandler::handleGetBitCommand(const Command& command) {
+Response CommandHandler::handleGetBitCommand(TransactionID tx_id, const Command& command) {
     if (command.args.size() < 2) {
         return Response(ResponseStatus::ERROR, "GETBIT命令需要至少2个参数");
     }
@@ -772,14 +773,14 @@ Response CommandHandler::handleGetBitCommand(const Command& command) {
         Key key(command.args[0]);
         uint64_t offset = std::stoull(command.args[1]);
         
-        bool bit = storage_engine_->getBit(key, offset);
+        bool bit = storage_engine_->getBit(tx_id, key, offset);
         return Response(ResponseStatus::OK, "", std::to_string(bit ? 1 : 0));
     } catch (const std::invalid_argument&) {
         return Response(ResponseStatus::ERROR, "无效的参数类型");
     }
 }
 
-Response CommandHandler::handleBitCountCommand(const Command& command) {
+Response CommandHandler::handleBitCountCommand(TransactionID tx_id, const Command& command) {
     if (command.args.empty()) {
         return Response(ResponseStatus::ERROR, "BITCOUNT命令需要至少1个参数");
     }
@@ -789,13 +790,13 @@ Response CommandHandler::handleBitCountCommand(const Command& command) {
     
     if (command.args.size() == 1) {
         // 没有额外参数，统计整个位图
-        count = storage_engine_->bitCount(key);
+        count = storage_engine_->bitCount(tx_id, key);
     } else if (command.args.size() == 3) {
         // 有start和end参数，这些参数指的是字节索引
         try {
             uint64_t start = std::stoull(command.args[1]);
             uint64_t end = std::stoull(command.args[2]);
-            count = storage_engine_->bitCount(key, start, end);
+            count = storage_engine_->bitCount(tx_id, key, start, end);
         } catch (const std::invalid_argument&) {
             return Response(ResponseStatus::ERROR, "无效的参数类型");
         }
@@ -806,7 +807,7 @@ Response CommandHandler::handleBitCountCommand(const Command& command) {
     return Response(ResponseStatus::OK, "", std::to_string(count));
 }
 
-Response CommandHandler::handleBitOpCommand(const Command& command, bool& need_inc_dirty) {
+Response CommandHandler::handleBitOpCommand(TransactionID tx_id, const Command& command, bool& need_inc_dirty) {
     if (command.args.size() < 4) {
         return Response(ResponseStatus::ERROR, "BITOP命令需要至少4个参数");
     }
@@ -818,7 +819,7 @@ Response CommandHandler::handleBitOpCommand(const Command& command, bool& need_i
         srcKeys.push_back(Key(command.args[i]));
     }
     
-    bool success = storage_engine_->bitOp(operation, destKey, srcKeys);
+    bool success = storage_engine_->bitOp(tx_id, operation, destKey, srcKeys);
     
     if (success) {
         need_inc_dirty = true;
@@ -829,7 +830,7 @@ Response CommandHandler::handleBitOpCommand(const Command& command, bool& need_i
 }
 
 // HyperLogLog命令处理
-Response CommandHandler::handlePFAddCommand(const Command& command, bool& need_inc_dirty) {
+Response CommandHandler::handlePFAddCommand(TransactionID tx_id, const Command& command, bool& need_inc_dirty) {
     if (command.args.size() < 2) {
         return Response(ResponseStatus::ERROR, "PFADD命令需要至少2个参数");
     }
@@ -840,7 +841,7 @@ Response CommandHandler::handlePFAddCommand(const Command& command, bool& need_i
         elements.push_back(Value(command.args[i]));
     }
     
-    bool success = storage_engine_->pfadd(key, elements);
+    bool success = storage_engine_->pfadd(tx_id, key, elements);
     
     if (success) {
         need_inc_dirty = true;
@@ -849,7 +850,7 @@ Response CommandHandler::handlePFAddCommand(const Command& command, bool& need_i
     return Response(ResponseStatus::OK, "", success ? "1" : "0");
 }
 
-Response CommandHandler::handlePFCountCommand(const Command& command) {
+Response CommandHandler::handlePFCountCommand(TransactionID tx_id, const Command& command) {
     if (command.args.empty()) {
         return Response(ResponseStatus::ERROR, "PFCOUNT命令需要至少1个参数");
     }
@@ -857,18 +858,18 @@ Response CommandHandler::handlePFCountCommand(const Command& command) {
     uint64_t count = 0;
     if (command.args.size() == 1) {
         // 单个键
-        count = storage_engine_->pfcount(command.args[0]);
+        count = storage_engine_->pfcount(tx_id, command.args[0]);
     } else {
         // 多个键，需要创建临时合并后的HyperLogLog
         // 注意：此实现简化了Redis的PFCOUNT多个键的处理，实际应合并后再计数
         // 这里仅返回第一个键的计数作为示例
-        count = storage_engine_->pfcount(command.args[0]);
+        count = storage_engine_->pfcount(tx_id, command.args[0]);
     }
     
     return Response(ResponseStatus::OK, "", std::to_string(count));
 }
 
-Response CommandHandler::handlePFMergeCommand(const Command& command, bool& need_inc_dirty) {
+Response CommandHandler::handlePFMergeCommand(TransactionID tx_id, const Command& command, bool& need_inc_dirty) {
     if (command.args.size() < 2) {
         return Response(ResponseStatus::ERROR, "PFMERGE命令需要至少2个参数");
     }
@@ -879,7 +880,7 @@ Response CommandHandler::handlePFMergeCommand(const Command& command, bool& need
         sourceKeys.push_back(Key(command.args[i]));
     }
     
-    bool success = storage_engine_->pfmerge(destKey, sourceKeys);
+    bool success = storage_engine_->pfmerge(tx_id, destKey, sourceKeys);
     
     if (success) {
         need_inc_dirty = true;
@@ -978,27 +979,18 @@ Response CommandHandler::handleBgSaveCommand(const std::string& rdb_filename) {
     return Response(ResponseStatus::OK, "Background saving started");
 }
 
-// 检查命令是否可能分配内存
-bool CommandHandler::isReadOnlyCommand(CommandType type) {
-    switch (type) {
-        case CommandType::GET:
-        case CommandType::EXISTS:
-        case CommandType::SCARD:
-        case CommandType::DBSIZE:
-        case CommandType::INFO:
-        case CommandType::SHUTDOWN:
-            return true;
-        default:
-            return false;
-    }
-}
-
 // 记录AOF命令
 void CommandHandler::appendAOFCommand(const Command& command) {
     if (enable_aof_ && aof_persistence_) {
         aof_persistence_->appendCommand(command);
     }
 }
+void CommandHandler::appendAOFCommands(const std::vector<Command>& commands) {
+    if (enable_aof_ && aof_persistence_) {
+        aof_persistence_->appendCommands(commands);
+    }
+}
+
 
 void CommandHandler::setAofPersistence(AOFPersistence* aof_persistence) {
     aof_persistence_ = aof_persistence;

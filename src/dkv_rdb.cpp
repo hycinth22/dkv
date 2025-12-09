@@ -10,6 +10,7 @@
 namespace dkv {
 
 // 保存数据到RDB文件
+// TODO: RDB保存已提交的事务数据项，如果最新版本未提交，则查询UNDOLOG
 bool RDBPersistence::saveToFile(StorageEngine* storage_engine, const std::string& filename) {
     if (!storage_engine) {
         DKV_LOG_ERROR("Error: Storage engine is null");
@@ -36,7 +37,7 @@ bool RDBPersistence::saveToFile(StorageEngine* storage_engine, const std::string
     
     // 遍历所有键值对并写入文件
     for (const auto& key : keys) {
-        DataItem* item = storage_engine->getDataItem(key);
+        DataItem* item = storage_engine->getDataItem(NO_TX, key);
         if (item) {
             if (!writeKeyValue(file, key, item)) {
                 file.close();
@@ -208,10 +209,10 @@ bool RDBPersistence::readKeyValue(std::ifstream& file, StorageEngine* storage_en
                     auto now = Utils::getCurrentTime();
                     auto duration = std::chrono::duration_cast<std::chrono::seconds>(expire_time - now).count();
                     if (duration > 0) {
-                        storage_engine->set(key, string_item->getValue(), duration);
+                        storage_engine->set(NO_TX, key, string_item->getValue(), duration);
                     }
                 } else {
-                    storage_engine->set(key, string_item->getValue());
+                    storage_engine->set(NO_TX, key, string_item->getValue());
                 }
             }
             break;
@@ -221,13 +222,13 @@ bool RDBPersistence::readKeyValue(std::ifstream& file, StorageEngine* storage_en
             if (hash_item) {
                 auto all_fields = hash_item->getAll();
                 for (const auto& [field, value] : all_fields) {
-                    storage_engine->hset(key, field, value);
+                    storage_engine->hset(NO_TX, key, field, value);
                 }
                 if (has_expire) {
                     auto now = Utils::getCurrentTime();
                     auto duration = std::chrono::duration_cast<std::chrono::seconds>(expire_time - now).count();
                     if (duration > 0) {
-                        storage_engine->expire(key, duration);
+                        storage_engine->expire(NO_TX, key, duration);
                     }
                 }
             }
@@ -238,13 +239,13 @@ bool RDBPersistence::readKeyValue(std::ifstream& file, StorageEngine* storage_en
             if (list_item) {
                 auto elements = list_item->lrange(0, -1);
                 for (const auto& element : elements) {
-                    storage_engine->rpush(key, element);
+                    storage_engine->rpush(NO_TX, key, element);
                 }
                 if (has_expire) {
                     auto now = Utils::getCurrentTime();
                     auto duration = std::chrono::duration_cast<std::chrono::seconds>(expire_time - now).count();
                     if (duration > 0) {
-                        storage_engine->expire(key, duration);
+                        storage_engine->expire(NO_TX, key, duration);
                     }
                 }
             }
@@ -254,12 +255,12 @@ bool RDBPersistence::readKeyValue(std::ifstream& file, StorageEngine* storage_en
             auto* set_item = dynamic_cast<SetItem*>(item.get());
             if (set_item) {
                 auto members = set_item->smembers();
-                storage_engine->sadd(key, members);
+                storage_engine->sadd(NO_TX, key, members);
                 if (has_expire) {
                     auto now = Utils::getCurrentTime();
                     auto duration = std::chrono::duration_cast<std::chrono::seconds>(expire_time - now).count();
                     if (duration > 0) {
-                        storage_engine->expire(key, duration);
+                        storage_engine->expire(NO_TX, key, duration);
                     }
                 }
             }

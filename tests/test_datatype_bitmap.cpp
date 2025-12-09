@@ -112,65 +112,65 @@ bool testBitmapItem() {
 bool testBitmapCommands() {
     StorageEngine storage;
     // 测试SETBIT和GETBIT
-    assert(storage.setBit("bitmap1", 0, true));
-    assert(storage.getBit("bitmap1", 0) == true);
-    assert(storage.setBit("bitmap1", 1, true));
-    assert(storage.getBit("bitmap1", 1) == true);
+    assert(storage.setBit(NO_TX, "bitmap1", 0, true));
+    assert(storage.getBit(NO_TX, "bitmap1", 0) == true);
+    assert(storage.setBit(NO_TX, "bitmap1", 1, true));
+    assert(storage.getBit(NO_TX, "bitmap1", 1) == true);
     
-    assert(storage.setBit("bitmap1", 100, true));
-    assert(storage.getBit("bitmap1", 100) == true);
+    assert(storage.setBit(NO_TX, "bitmap1", 100, true));
+    assert(storage.getBit(NO_TX, "bitmap1", 100) == true);
     
     // 测试不存在的位返回false
-    assert(storage.getBit("bitmap1", 2) == false);
-    assert(storage.getBit("non_existent", 0) == false);
+    assert(storage.getBit(NO_TX, "bitmap1", 2) == false);
+    assert(storage.getBit(NO_TX, "non_existent", 0) == false);
     
     // 测试BITCOUNT
-    assert(storage.bitCount("bitmap1") == 3);
-    assert(storage.bitCount("bitmap1", 0, 1) == 2); // 位0和位1
-    assert(storage.bitCount("bitmap1", 2, 100) == 1); // 位100
-    assert(storage.bitCount("non_existent") == 0);
+    assert(storage.bitCount(NO_TX, "bitmap1") == 3);
+    assert(storage.bitCount(NO_TX, "bitmap1", 0, 1) == 2); // 位0和位1
+    assert(storage.bitCount(NO_TX, "bitmap1", 2, 100) == 1); // 位100
+    assert(storage.bitCount(NO_TX, "non_existent") == 0);
     
     // 测试位操作
     // 设置两个源位图
-    assert(storage.setBit("bitmap2", 0, true));
-    assert(storage.setBit("bitmap2", 2, true));
+    assert(storage.setBit(NO_TX, "bitmap2", 0, true));
+    assert(storage.setBit(NO_TX, "bitmap2", 2, true));
     
-    assert(storage.setBit("bitmap3", 1, true));
-    assert(storage.setBit("bitmap3", 2, true));
+    assert(storage.setBit(NO_TX, "bitmap3", 1, true));
+    assert(storage.setBit(NO_TX, "bitmap3", 2, true));
     
     // AND 操作
     vector<Key> keys_and = {"bitmap2", "bitmap3"};
-    assert(storage.bitOp("AND", "bitmap_and", keys_and));
-    assert(storage.getBit("bitmap_and", 0) == false);
-    assert(storage.getBit("bitmap_and", 1) == false);
-    assert(storage.getBit("bitmap_and", 2) == true);
-    assert(storage.bitCount("bitmap_and") == 1);
+    assert(storage.bitOp(NO_TX, "AND", "bitmap_and", keys_and));
+    assert(storage.getBit(NO_TX, "bitmap_and", 0) == false);
+    assert(storage.getBit(NO_TX, "bitmap_and", 1) == false);
+    assert(storage.getBit(NO_TX, "bitmap_and", 2) == true);
+    assert(storage.bitCount(NO_TX, "bitmap_and") == 1);
     
     // OR 操作
     vector<Key> keys_or = {"bitmap2", "bitmap3"};
-    assert(storage.bitOp("OR", "bitmap_or", keys_or));
-    assert(storage.getBit("bitmap_or", 0) == true);
-    assert(storage.getBit("bitmap_or", 1) == true);
-    assert(storage.getBit("bitmap_or", 2) == true);
-    assert(storage.bitCount("bitmap_or") == 3);
+    assert(storage.bitOp(NO_TX, "OR", "bitmap_or", keys_or));
+    assert(storage.getBit(NO_TX, "bitmap_or", 0) == true);
+    assert(storage.getBit(NO_TX, "bitmap_or", 1) == true);
+    assert(storage.getBit(NO_TX, "bitmap_or", 2) == true);
+    assert(storage.bitCount(NO_TX, "bitmap_or") == 3);
     
     // XOR 操作
     vector<Key> keys_xor = {"bitmap2", "bitmap3"};
-    assert(storage.bitOp("XOR", "bitmap_xor", keys_xor));
-    assert(storage.getBit("bitmap_xor", 0) == true);
-    assert(storage.getBit("bitmap_xor", 1) == true);
-    assert(storage.getBit("bitmap_xor", 2) == false);
-    assert(storage.bitCount("bitmap_xor") == 2);
+    assert(storage.bitOp(NO_TX, "XOR", "bitmap_xor", keys_xor));
+    assert(storage.getBit(NO_TX, "bitmap_xor", 0) == true);
+    assert(storage.getBit(NO_TX, "bitmap_xor", 1) == true);
+    assert(storage.getBit(NO_TX, "bitmap_xor", 2) == false);
+    assert(storage.bitCount(NO_TX, "bitmap_xor") == 2);
     
     // NOT 操作
     vector<Key> keys_not = {"bitmap2"};
-    assert(storage.bitOp("NOT", "bitmap_not", keys_not));
+    assert(storage.bitOp(NO_TX, "NOT", "bitmap_not", keys_not));
     // NOT操作后的结果取决于实现，这里我们只确保操作成功执行
     
     // 测试删除位图键
-    assert(storage.del("bitmap1"));
-    assert(!storage.exists("bitmap1"));
-    assert(storage.bitCount("bitmap1") == 0);
+    assert(storage.del(NO_TX, "bitmap1"));
+    assert(!storage.exists(NO_TX, "bitmap1"));
+    assert(storage.bitCount(NO_TX, "bitmap1") == 0);
     
     return true;
 }

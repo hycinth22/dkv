@@ -74,7 +74,7 @@ public:
     bool isDiscard() const {
         return discard_;
     }
-    bool setDiscard() {
+    void setDiscard() {
         discard_ = true;
     }
     

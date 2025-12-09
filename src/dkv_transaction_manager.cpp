@@ -82,6 +82,12 @@ vector<TransactionID> TransactionManager::getRolledbackTransactions() const {
     return rollback_txids;
 }
 
+const Transaction& TransactionManager::getTransaction(TransactionID transaction_id) const {
+    return getTransactionImpl(*this, transaction_id);
+}
 
+Transaction& TransactionManager::getTransactionMut(TransactionID transaction_id) {
+    return getTransactionImpl(*this, transaction_id);
+}
 
 } // namespace dkv

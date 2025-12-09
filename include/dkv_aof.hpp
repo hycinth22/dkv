@@ -37,6 +37,7 @@ public:
 
     // 写入命令到AOF文件
     bool appendCommand(const Command& command);
+    bool appendCommands(const std::vector<Command>& commands);
 
     // 从AOF文件恢复数据
     bool loadFromFile(DKVServer* server);

@@ -96,6 +96,57 @@ enum class CommandType {
     DISCARD = 55
 };
 
+inline bool isReadOnlyCommand(CommandType type) {
+    switch (type) {
+        case CommandType::GET:
+        case CommandType::EXISTS:
+        case CommandType::HGET:
+        case CommandType::HGETALL:
+        case CommandType::HEXISTS:
+        case CommandType::HKEYS:
+        case CommandType::HVALS:
+        case CommandType::HLEN:
+        case CommandType::LLEN:
+        case CommandType::LRANGE:
+        case CommandType::SMEMBERS:
+        case CommandType::SISMEMBER:
+        case CommandType::SCARD:
+        case CommandType::ZSCORE:
+        case CommandType::ZISMEMBER:
+        case CommandType::ZRANK:
+        case CommandType::ZREVRANK:
+        case CommandType::ZRANGE:
+        case CommandType::ZREVRANGE:
+        case CommandType::ZRANGEBYSCORE:
+        case CommandType::ZREVRANGEBYSCORE:
+        case CommandType::ZCOUNT:
+        case CommandType::ZCARD:
+        case CommandType::GETBIT:
+        case CommandType::BITCOUNT:
+        case CommandType::PFCOUNT:
+        case CommandType::DBSIZE:
+        case CommandType::INFO:
+        case CommandType::SHUTDOWN:
+            return true;
+        default:
+            return false;
+    }
+}
+
+inline bool commandNotAllowedInTx(CommandType type) {
+    switch (type) {
+        case CommandType::FLUSHDB:
+        case CommandType::SHUTDOWN:
+        case CommandType::SAVE:
+        case CommandType::BGSAVE:
+        case CommandType::RESTORE_HLL:
+        case CommandType::MULTI:
+            return true;
+        default:
+            return false;
+    }
+}
+
 // 响应状态枚举
 enum class ResponseStatus {
     OK = 0,
@@ -150,6 +201,9 @@ enum class UndoLogType {
     SET,
     DELETE
 };
+
+using TransactionID = uint64_t;
+const TransactionID NO_TX = 0;
 
 struct UndoLog {
     UndoLogType ty;

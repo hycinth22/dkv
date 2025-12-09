@@ -1,3 +1,4 @@
+#include "dkv_core.hpp"
 #include "dkv_storage.hpp"
 #include "dkv_datatypes.hpp"
 #include "test_runner.hpp"
@@ -19,7 +20,7 @@ bool testConcurrentReadsDifferentKeys() {
     
     // 准备测试数据
     for (int i = 0; i < NUM_THREADS * KEYS_PER_THREAD; ++i) {
-        storage.set("key" + to_string(i), "value" + to_string(i));
+        storage.set(NO_TX, "key" + to_string(i), "value" + to_string(i));
     }
     
     vector<thread> threads;
@@ -33,7 +34,7 @@ bool testConcurrentReadsDifferentKeys() {
                 string key = "key" + to_string(key_index);
                 string expected_value = "value" + to_string(key_index);
                 
-                string value = storage.get(key);
+                string value = storage.get(NO_TX, key);
                 if (value == expected_value) {
                     successful_reads++;
                 }
@@ -64,7 +65,7 @@ bool testConcurrentReadsSameKey() {
     // 准备测试数据
     const string TEST_KEY = "shared_key";
     const string TEST_VALUE = "shared_value";
-    storage.set(TEST_KEY, TEST_VALUE);
+    storage.set(NO_TX, TEST_KEY, TEST_VALUE);
     
     vector<thread> threads;
     atomic<int> successful_reads(0);
@@ -73,7 +74,7 @@ bool testConcurrentReadsSameKey() {
     for (int t = 0; t < NUM_THREADS; ++t) {
         threads.emplace_back([&storage, TEST_KEY, TEST_VALUE, READS_PER_THREAD, &successful_reads]() {
             for (int i = 0; i < READS_PER_THREAD; ++i) {
-                string value = storage.get(TEST_KEY);
+                string value = storage.get(NO_TX, TEST_KEY);
                 if (value == TEST_VALUE) {
                     successful_reads++;
                 }
@@ -104,7 +105,7 @@ bool testConcurrentReadWriteSameKey() {
     
     // 准备测试数据
     const string TEST_KEY = "concurrent_key";
-    storage.set(TEST_KEY, "initial_value");
+    storage.set(NO_TX, TEST_KEY, "initial_value");
     
     vector<thread> threads;
     atomic<int> successful_operations(0);
@@ -115,7 +116,7 @@ bool testConcurrentReadWriteSameKey() {
         threads.emplace_back([&storage, TEST_KEY, OPERATIONS_PER_THREAD, &successful_operations, &current_value]() {
             for (int i = 0; i < OPERATIONS_PER_THREAD; ++i) {
                 int new_value = current_value++; // 原子操作，确保每个写入的值都是唯一的
-                bool success = storage.set(TEST_KEY, to_string(new_value));
+                bool success = storage.set(NO_TX, TEST_KEY, to_string(new_value));
                 if (success) {
                     successful_operations++;
                 }
@@ -130,7 +131,7 @@ bool testConcurrentReadWriteSameKey() {
     for (int t = 0; t < NUM_READER_THREADS; ++t) {
         threads.emplace_back([&storage, TEST_KEY, OPERATIONS_PER_THREAD, &successful_operations]() {
             for (int i = 0; i < OPERATIONS_PER_THREAD; ++i) {
-                string value = storage.get(TEST_KEY);
+                string value = storage.get(NO_TX, TEST_KEY);
                 if (!value.empty()) {
                     successful_operations++;
                 }
@@ -151,7 +152,7 @@ bool testConcurrentReadWriteSameKey() {
     ASSERT_EQ(successful_operations.load(), total_operations);
     
     // 验证最终值与预期一致
-    string final_value = storage.get(TEST_KEY);
+    string final_value = storage.get(NO_TX, TEST_KEY);
     ASSERT_EQ(final_value, to_string(NUM_WRITER_THREADS * OPERATIONS_PER_THREAD - 1));
     
     return true;
@@ -165,7 +166,7 @@ bool testConcurrentIncr() {
 
     // 准备测试数据
     const string COUNTER_KEY = "counter";
-    storage.set(COUNTER_KEY, "0");
+    storage.set(NO_TX, COUNTER_KEY, "0");
     
     vector<thread> threads;
 
@@ -173,7 +174,7 @@ bool testConcurrentIncr() {
     for (int t = 0; t < NUM_THREADS; ++t) {
         threads.emplace_back([&storage, COUNTER_KEY, INCR_PER_THREAD, t]() {
             for (int i = 0; i < INCR_PER_THREAD; ++i) {
-                storage.incr(COUNTER_KEY);
+                storage.incr(NO_TX, COUNTER_KEY);
                 
                 // 小延迟以增加并发冲突的可能性
                 this_thread::sleep_for(chrono::microseconds(2));
@@ -187,7 +188,7 @@ bool testConcurrentIncr() {
     }
 
     // 验证最终计数值是否正确
-    int64_t final_value = stoll(storage.get(COUNTER_KEY));
+    int64_t final_value = stoll(storage.get(NO_TX, COUNTER_KEY));
     int64_t expected_value = NUM_THREADS * INCR_PER_THREAD;
     ASSERT_EQ(final_value, expected_value);
     
@@ -214,10 +215,10 @@ bool testConcurrentHashOperations() {
                 string value = "value_" + to_string(i);
                 
                 // 执行hset操作
-                storage.hset(HASH_KEY, field, value);
+                storage.hset(NO_TX, HASH_KEY, field, value);
                 
                 // 执行hget操作验证
-                string retrieved_value = storage.hget(HASH_KEY, field);
+                string retrieved_value = storage.hget(NO_TX, HASH_KEY, field);
                 ASSERT_EQ(retrieved_value, value);
                 
                 // 小延迟以模拟真实负载
@@ -232,14 +233,14 @@ bool testConcurrentHashOperations() {
     }
     
     // 验证哈希的大小是否正确
-    size_t hash_size = storage.hlen(HASH_KEY);
+    size_t hash_size = storage.hlen(NO_TX, HASH_KEY);
     ASSERT_EQ(hash_size, size_t(NUM_THREADS));
     
     // 验证所有字段的值都是最后设置的值
     for (int t = 0; t < NUM_THREADS; ++t) {
         string field = "field_" + to_string(t);
         string expected_value = "value_" + to_string(OPERATIONS_PER_THREAD - 1);
-        string retrieved_value = storage.hget(HASH_KEY, field);
+        string retrieved_value = storage.hget(NO_TX, HASH_KEY, field);
         ASSERT_EQ(retrieved_value, expected_value);
     }
     
@@ -263,7 +264,7 @@ bool testConcurrentListOperations() {
         wthreads.emplace_back([&storage, LIST_KEY, OPERATIONS_PER_THREAD, &items_in_list, t]() {
             for (int i = 0; i < OPERATIONS_PER_THREAD; ++i) {
                 string value = "item_" + to_string(t) + "_" + to_string(i);
-                storage.lpush(LIST_KEY, value);
+                storage.lpush(NO_TX, LIST_KEY, value);
                 items_in_list++;
                 
                 // 小延迟以模拟真实负载
@@ -275,7 +276,7 @@ bool testConcurrentListOperations() {
     for (int t = 0; t < NUM_READER_THREADS; ++t) {
         rthreads.emplace_back([&storage, LIST_KEY, &items_in_list, &items_read]() {
             while (items_read < NUM_WRITER_THREADS * OPERATIONS_PER_THREAD) {
-                string value = storage.rpop(LIST_KEY);
+                string value = storage.rpop(NO_TX, LIST_KEY);
                 if (!value.empty()) {
                     stringstream ss;
                     ss << items_read << endl;
@@ -300,7 +301,7 @@ bool testConcurrentListOperations() {
     ASSERT_EQ(items_read.load(), NUM_WRITER_THREADS * OPERATIONS_PER_THREAD);
     
     // 验证列表为空
-    size_t list_size = storage.llen(LIST_KEY);
+    size_t list_size = storage.llen(NO_TX, LIST_KEY);
     ASSERT_EQ(list_size, size_t(0));
     
     return true;
@@ -326,20 +327,20 @@ bool testHighConcurrencyPerformance() {
                 int op_type = i % 4;
                 switch (op_type) {
                     case 0: // 设置值
-                        if (storage.set(key, "value_" + to_string(i))) {
+                        if (storage.set(NO_TX, key, "value_" + to_string(i))) {
                             successful_operations++;
                         }
                         break;
                     case 1: // 获取值
-                        storage.decr(key + "_counter");
+                        storage.decr(NO_TX, key + "_counter");
                         successful_operations++;
                         break;
                     case 2: // 递增
-                        storage.incr(key + "_counter");
+                        storage.incr(NO_TX, key + "_counter");
                         successful_operations++;
                         break;
                     case 3: // 哈希操作
-                        storage.hset(key + "_hash", "field", "hash_value");
+                        storage.hset(NO_TX, key + "_hash", "field", "hash_value");
                         successful_operations++;
                         break;
                 }

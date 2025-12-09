@@ -12,7 +12,7 @@ namespace dkv {
 
 bool testMVCCGetAndSet() {
     // 创建必要的对象
-    SimpleInnerStorage inner_storage;
+    InnerStorage inner_storage;
     MVCC mvcc(inner_storage);
     StorageEngine engine;
     TransactionManager tx_manager(&engine, TransactionIsolationLevel::REPEATABLE_READ);
@@ -62,7 +62,7 @@ bool testMVCCGetAndSet() {
 
 bool testMVCCDelete() {
     // 创建必要的对象
-    SimpleInnerStorage inner_storage;
+    InnerStorage inner_storage;
     MVCC mvcc(inner_storage);
     StorageEngine engine;
     TransactionManager tx_manager(&engine, TransactionIsolationLevel::REPEATABLE_READ);
@@ -96,7 +96,7 @@ bool testMVCCDelete() {
 
 bool testMVCCReadViewVisibility() {
     // 创建必要的对象
-    SimpleInnerStorage inner_storage;
+    InnerStorage inner_storage;
     MVCC mvcc(inner_storage);
     StorageEngine engine;
     TransactionManager tx_manager(&engine, TransactionIsolationLevel::REPEATABLE_READ);
@@ -150,7 +150,7 @@ bool testMVCCReadViewVisibility() {
 
 bool testMVCCUndoLog() {
     // 创建必要的对象
-    SimpleInnerStorage inner_storage;
+    InnerStorage inner_storage;
     MVCC mvcc(inner_storage);
     StorageEngine engine;
     TransactionManager tx_manager(&engine, TransactionIsolationLevel::REPEATABLE_READ);

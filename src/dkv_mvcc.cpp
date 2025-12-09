@@ -13,7 +13,7 @@ namespace dkv {
 // MVCC类，提供多版本并发控制
 
 // 获取指定事务可见的版本
-DataItem* MVCC::get(ReadView& read_view, const Key& key) const{
+DataItem* MVCC::get(const ReadView& read_view, const Key& key) const{
     auto readlock = inner_storage_.rlock();
     // 查找键
     auto it = inner_storage_.find(key);
@@ -25,36 +25,32 @@ DataItem* MVCC::get(ReadView& read_view, const Key& key) const{
     DKV_LOG_DEBUG("latest version for key ", key, " is writeen by tx ", entry->getTransactionId());
 
     // 检查事务可见性
-    if (!read_view.isVisible(entry->getTransactionId()) && !entry->isDeleted()) {
-        // 最新版本对事务不可见，需要找历史版本
-        DKV_LOG_DEBUG("Lookup history version for key:", key, " with read_view: ", read_view);
-        UndoLog *undo_log = entry->getUndoLog().get();
-        assert(undo_log->old_value != nullptr && "undo_log->old_value should not be nullptr");
-        while(undo_log != nullptr) {
-            if (!read_view.isVisible(undo_log->old_value->getTransactionId()) && !undo_log->old_value->isDeleted()) {
-                break;
-            } else {
-                DKV_LOG_DEBUG("history version ", undo_log->old_value->getTransactionId(), " is not visible", key);
-            }
-            DKV_LOG_DEBUG("undo_log->old_value->getTransactionId(): ", undo_log->old_value->getTransactionId());
-            undo_log = undo_log->old_value->getUndoLog().get();
-        }
-        if (undo_log == nullptr) {
-            // 没有可见的历史版本，返回空指针
-            DKV_LOG_DEBUG("no visible history version for key: {}", key);
-            return nullptr;
-        }
-        // 如果历史版本是删除状态，返回空指针
-        if (undo_log->old_value->isDeleted()) {
-            DKV_LOG_DEBUG("history version for key: {} is deleted", key);
-            return nullptr;
-        }
-        // 找到可见的历史版本，返回其旧值
-        DKV_LOG_DEBUG("visible history version for key: {} is", key);
-        return undo_log->old_value.get();
+    if (read_view.isVisible(entry->getTransactionId()) && !entry->isDiscard()) {
+        // 最新版本对事务可见，直接返回
+        return it->second.get();
     }
-    // 返回最新版本
-    return it->second.get();
+    // 最新版本对事务不可见或已删除，需要找历史版本
+    DKV_LOG_DEBUG("Lookup history version for key:", key, " with read_view: ", read_view);
+    UndoLog *undo_log = entry->getUndoLog().get();
+    while(undo_log != nullptr) {
+        const unique_ptr<DataItem>& old_item = undo_log->old_value;
+        if (read_view.isVisible(old_item->getTransactionId()) && !old_item->isDiscard()) {
+            // 找到可见的历史版本
+            // 如果历史版本是删除状态，返回空指针
+            if (undo_log->old_value->isDeleted()) {
+                DKV_LOG_DEBUG("history version for key: {} is deleted", key);
+                return nullptr;
+            }
+            // 如果历史版本是非删除状态，返回数据项
+            DKV_LOG_DEBUG("visible history version for key: {} is tx {}", key, old_item->getTransactionId());
+            return old_item.get();
+        }
+        DKV_LOG_DEBUG("history version tx {} for key {} is not visible", old_item->getTransactionId(), key);
+        undo_log = old_item->getUndoLog().get();
+    }
+    // 没有可见的历史版本，返回空指针
+    DKV_LOG_DEBUG("no visible history version for key: {}", key);
+    return nullptr;
 }
 
 // 设置键值，并记录到UNDOLOG
@@ -90,8 +86,9 @@ bool MVCC::del(TransactionID tx_id, const Key& key) {
     new_undo_log->ty = UndoLogType::DELETE;
     new_undo_log->old_value = move(entry);
 
-    // 删除键
-    unique_ptr<DataItem> virtual_item = entry->clone();
+    // 创建删除标记的虚拟数据项
+    // 使用之前保存到undo_log的旧值来克隆，而不是空的entry
+    unique_ptr<DataItem> virtual_item = new_undo_log->old_value->clone();
     virtual_item->setTransactionId(tx_id);
     virtual_item->setDeleted(true);
     virtual_item->setUndoLog(move(new_undo_log));
@@ -100,7 +97,7 @@ bool MVCC::del(TransactionID tx_id, const Key& key) {
 }
 
 // 创建ReadView，用于实现可重复读隔离级别
-ReadView MVCC::createReadView(TransactionID tx_id, TransactionManager& txm) {
+ReadView MVCC::createReadView(TransactionID tx_id, TransactionManager& txm) const {
     ReadView read_view;
     read_view.creator = tx_id;
     const auto& actives = txm.getActiveTransactions();
@@ -115,7 +112,7 @@ ReadView MVCC::createReadView(TransactionID tx_id, TransactionManager& txm) {
 }
 
 // 检查数据项对指定ReadView是否可见
-bool ReadView::isVisible(TransactionID tx_id) {
+bool ReadView::isVisible(TransactionID tx_id) const {
     // 如果数据项的事务ID小于read_view.low，说明事务已提交，则可见
     if (tx_id < this->low) {
         return true;

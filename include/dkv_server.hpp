@@ -5,6 +5,7 @@
 #include "dkv_network.hpp"
 #include "dkv_aof.hpp"
 #include "dkv_command_handler.hpp"
+#include "dkv_transaction.hpp"
 #include "dkv_transaction_manager.hpp"
 #include <memory>
 #include <thread>
@@ -87,7 +88,7 @@ public:
     
     // 执行命令
     Response executeCommand(int client_fd, const Command& command);
-    Response executeCommand(const Command& command);
+    Response executeCommand(const Command& command, TransactionID tx_id);
     
     // 获取内存使用量
     size_t getMemoryUsage() const;
@@ -108,7 +109,7 @@ public:
     TransactionIsolationLevel getTransactionIsolationLevel() const;
     
     // 根据淘汰策略淘汰键
-    void evictKeys();
+    void evictKeys(TransactionID tx_id);
 
     // 获取存储引擎（用于AOF重写）
     StorageEngine* getStorageEngine() const {

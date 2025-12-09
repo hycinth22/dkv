@@ -88,7 +88,7 @@ bool AOFPersistence::appendCommand(const Command& command) {
         return true; // AOF未启用，视为成功
     }
     if (recovering) {
-        return true; // 正在恢复中，忽略写入
+        return false; // 正在恢复中，忽略写入
     }
 
     std::lock_guard<std::mutex> lock(file_mutex_);
@@ -103,6 +103,33 @@ bool AOFPersistence::appendCommand(const Command& command) {
     }
     return result;
 }
+
+bool AOFPersistence::appendCommands(const std::vector<Command>& commands) {
+    if (!enabled_) {
+        return true; // AOF未启用，视为成功
+    }
+    if (recovering) {
+        return false; // 正在恢复中，忽略写入
+    }
+
+    std::lock_guard<std::mutex> lock(file_mutex_);
+    if (!aof_file_.is_open()) {
+        DKV_LOG_ERROR("AOF file is not open");
+        return false;
+    }
+
+    bool result = true;
+    for (const auto& command : commands) {
+        result &= writeCommandToFile(command);
+        if (!result) return false;
+    }
+    if (result) {
+        fsyncIfNeeded();
+    }
+    return result;
+}
+
+
 
 bool AOFPersistence::writeCommandToFile(const Command& command) {
     try {
@@ -160,7 +187,7 @@ bool AOFPersistence::loadFromFile(DKVServer* server) {
             }
 
             // 执行命令
-            server->executeCommand(command);
+            server->executeCommand(command, NO_TX);
 
             DKV_LOG_DEBUG("Executing command from AOF: ", Utils::commandTypeToString(command.type));
         }
@@ -195,17 +222,20 @@ bool AOFPersistence::rewrite(StorageEngine* storage_engine, const std::string& t
         // 遍历所有键，将当前状态写入临时文件
         for (const auto& key : keys) {
             // 使用公共API检查键是否存在
-            if (!storage_engine->exists(key)) {
+            // 使用 0 作为特殊事务 ID，用于 AOF 重写
+            TransactionID tx_id = 0;
+            
+            if (!storage_engine->exists(tx_id, key)) {
                 continue;
             }
             
-            DataItem* item = storage_engine->getDataItem(key);
+            DataItem* item = storage_engine->getDataItem(tx_id, key);
             if (!item) continue;
             
             // 根据数据类型执行不同的操作
             if (dynamic_cast<StringItem*>(item)) {
                 // 处理字符串类型
-                std::string value = storage_engine->get(key);
+                std::string value = storage_engine->get(tx_id, key);
                 if (!value.empty()) {
                     Command command(CommandType::SET, {key, value});
                     // 写入临时文件
@@ -218,7 +248,7 @@ bool AOFPersistence::rewrite(StorageEngine* storage_engine, const std::string& t
                 }
             } else if (dynamic_cast<HashItem*>(item)) {
                 // 处理哈希类型
-                std::vector<std::pair<Value, Value>> fields = storage_engine->hgetall(key);
+                std::vector<std::pair<Value, Value>> fields = storage_engine->hgetall(tx_id, key);
                 for (const auto& [field, value] : fields) {
                     Command command(CommandType::HSET, {key, field, value});
                     std::vector<std::string> command_parts;
@@ -230,7 +260,7 @@ bool AOFPersistence::rewrite(StorageEngine* storage_engine, const std::string& t
                 DKV_LOG_DEBUG("Rewriting hash key: ", key);
             } else if (dynamic_cast<ListItem*>(item)) {
                 // 处理列表类型
-                std::vector<Value> elements = storage_engine->lrange(key, 0, -1);
+                std::vector<Value> elements = storage_engine->lrange(tx_id, key, 0, -1);
                 for (const auto& element : elements) {
                     Command command(CommandType::RPUSH, {key, element});
                     std::vector<std::string> command_parts;
@@ -242,7 +272,7 @@ bool AOFPersistence::rewrite(StorageEngine* storage_engine, const std::string& t
                 DKV_LOG_DEBUG("Rewriting list key: ", key);
             } else if (dynamic_cast<SetItem*>(item)) {
                 // 处理集合类型
-                std::vector<Value> members = storage_engine->smembers(key);
+                std::vector<Value> members = storage_engine->smembers(tx_id, key);
                 Command command(CommandType::SADD, {key});
                 command.args.insert(command.args.end(), members.begin(), members.end());
                 std::vector<std::string> command_parts;
@@ -253,7 +283,7 @@ bool AOFPersistence::rewrite(StorageEngine* storage_engine, const std::string& t
                 DKV_LOG_DEBUG("Rewriting set key: ", key);
             } else if (dynamic_cast<ZSetItem*>(item)) {
                 // 处理有序集合类型
-                std::vector<std::pair<Value, double>> members_with_scores = storage_engine->zrange(key, 0, -1);
+                std::vector<std::pair<Value, double>> members_with_scores = storage_engine->zrange(tx_id, key, 0, -1);
                 for (const auto& [member, score] : members_with_scores) {
                     Command command(CommandType::ZADD, {key, std::to_string(score), member});
                     std::vector<std::string> command_parts;

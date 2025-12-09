@@ -2,152 +2,81 @@
 #include "dkv_datatypes.hpp"
 #include "dkv_memory_allocator.hpp"
 #include "dkv_logger.hpp"
-#include "storage/dkv_inner_storage.h"
-#include "storage/dkv_simple_storage.h"
+#include "dkv_inner_storage.h"
 #include <algorithm>
 #include <mutex>
 #include <cassert>
+// todo: fix lock
+
 namespace dkv {
 
 StorageEngine::StorageEngine(TransactionIsolationLevel tx_isolation_level) 
 : memory_usage_(0) { 
-    if (tx_isolation_level == TransactionIsolationLevel::READ_UNCOMMITTED || tx_isolation_level == TransactionIsolationLevel::SERIALIZABLE) {
-        inner_storage_ = std::make_unique<SimpleInnerStorage>();
-    } else if (tx_isolation_level == TransactionIsolationLevel::READ_COMMITTED || tx_isolation_level == TransactionIsolationLevel::REPEATABLE_READ) {
-        inner_storage_ = std::make_unique<MVCCInnerStorage>();
-    } else {
-        DKV_LOG_ERROR("Error: Unsupported transaction isolation level");
-        exit(1);
-    }
     transaction_manager_ = new TransactionManager(this, tx_isolation_level);
 }
 
 // StorageEngine 实现
-bool StorageEngine::set(const Key& key, const Value& value) {
-    auto readlock = inner_storage_->rlock();
-    // 检查键是否已存在且未过期
-    auto it = inner_storage_->find(key);
-    if (it != inner_storage_->end() && !it->second->isExpired()) {
-        auto keylock = it->second->lock();
-        // 更新现有值
-        auto* string_item = dynamic_cast<StringItem*>(it->second.get());
-        if (string_item) {
-            string_item->setValue(value);
-            return true;
-        }
-    }
-    readlock.unlock();
-    auto writelock = inner_storage_->wlock();
-    // 创建新的字符串项
-    (*inner_storage_)[key] = createStringItem(value);
-    total_keys_++;
-    return true;
+bool StorageEngine::set(TransactionID tx_id, const Key& key, const Value& value) {
+    auto item = createStringItem(value);
+    return inner_storage_.set(tx_id, key, std::move(item));
 }
 
-bool StorageEngine::set(const Key& key, const Value& value, int64_t expire_seconds) {
-    auto readlock = inner_storage_->rlock();
-    
-    // 计算过期时间
+bool StorageEngine::set(TransactionID tx_id, const Key& key, const Value& value, int64_t expire_seconds) {
     auto expire_time = Utils::getCurrentTime() + std::chrono::seconds(expire_seconds);
-    
-    // 检查键是否已存在且未过期
-    auto it = inner_storage_->find(key);
-    if (it != inner_storage_->end() && !it->second->isExpired()) {
-        auto keylock = it->second->lock();
-        // 更新现有值
-        auto* string_item = dynamic_cast<StringItem*>(it->second.get());
-        if (string_item) {
-            string_item->setValue(value);
-            string_item->setExpiration(expire_time);
-            return true;
-        }
-    }
-    
-    // 创建新的字符串项
-    readlock.unlock();
-    auto writelock = inner_storage_->wlock();
-    (*inner_storage_)[key] = createStringItem(value, expire_time);
-    total_keys_++;
-    return true;
+    auto item = createStringItem(value, expire_time);
+    return inner_storage_.set(tx_id, key, std::move(item));
 }
 
-std::string StorageEngine::get(const Key& key) {
-    auto readlock = inner_storage_->rlock();
-    
-    auto it = inner_storage_->find(key);
-    if (it == inner_storage_->end() || it->second->isExpired()) {
+std::string StorageEngine::get(TransactionID tx_id, const Key& key) {
+    auto item = inner_storage_.get(key);
+    if (!item || item->isExpired()) {
         return "";
     }
-    auto keylock = it->second->rlock();
     
-    auto* string_item = dynamic_cast<StringItem*>(it->second.get());
+    auto* string_item = dynamic_cast<StringItem*>(item);
     if (string_item) {
         // 更新访问时间和频率
         string_item->touch();
         string_item->incrementFrequency();
         return string_item->getValue();
     }
-    
     return "";
 }
 
-bool StorageEngine::del(const Key& key) {
-    auto writelock = inner_storage_->wlock();
-    
-    auto it = inner_storage_->find(key);
-    if (it != inner_storage_->end()) {
-        inner_storage_->erase(it);
-        total_keys_--;
-        return true;
-    }
-    
-    return false;
+bool StorageEngine::del(TransactionID tx_id, const Key& key) {
+    return inner_storage_.del(tx_id, key);
 }
 
-bool StorageEngine::exists(const Key& key) {
-    auto readlock = inner_storage_->rlock();
-    
-    auto it = inner_storage_->find(key);
-    if (it != inner_storage_->end() && !it->second->isExpired()) {
-        // 更新访问时间和频率
-        DataItem* item = it->second.get();
-        item->touch();
-        item->incrementFrequency();
-        return true;
-    }
-    return false;
-}
-
-bool StorageEngine::expire(const Key& key, int64_t seconds) {
-    auto readlock = inner_storage_->rlock();
-    
-    auto it = inner_storage_->find(key);
-    if (it == inner_storage_->end() || it->second->isExpired()) {
+bool StorageEngine::exists(TransactionID tx_id, const Key& key) {
+    auto item = inner_storage_.get(key);
+    if (!item || item->isExpired()) {
         return false;
     }
-    auto keylock = it->second->lock();
     
-    DataItem* item = it->second.get();
-    if (item) {
-        auto expire_time = Utils::getCurrentTime() + std::chrono::seconds(seconds);
-        item->setExpiration(expire_time);
-        return true;
-    }
-    
-    return false;
+    // 更新访问时间和频率
+    item->touch();
+    item->incrementFrequency();
+    return true;
 }
 
-int64_t StorageEngine::ttl(const Key& key) {
-    auto readlock = inner_storage_->rlock();
+bool StorageEngine::expire(TransactionID tx_id, const Key& key, int64_t seconds) {
+    auto item = inner_storage_.get(key);
+    if (!item || item->isExpired()) {
+        return false;
+    }
     
-    auto it = inner_storage_->find(key);
-    if (it == inner_storage_->end() || it->second->isExpired()) {
+    auto expire_time = Utils::getCurrentTime() + std::chrono::seconds(seconds);
+    item->setExpiration(expire_time);
+    return true;
+}
+
+int64_t StorageEngine::ttl(TransactionID tx_id, const Key& key) {
+    auto item = inner_storage_.get(key);
+    if (!item || item->isExpired()) {
         return -2; // 键不存在
     }
-    auto keylock = it->second->rlock();
-
-    DataItem* item = it->second.get();
-    if (item && item->hasExpiration()) {
+    
+    if (item->hasExpiration()) {
         auto now = Utils::getCurrentTime();
         auto expire_time = item->getExpiration();
         auto duration = std::chrono::duration_cast<std::chrono::seconds>(expire_time - now).count();
@@ -157,73 +86,74 @@ int64_t StorageEngine::ttl(const Key& key) {
     return -1; // 键存在但没有过期时间
 }
 
-int64_t StorageEngine::incr(const Key& key) {
-    auto readlock = inner_storage_->rlock();
-    
-    auto it = inner_storage_->find(key);
-    if (it != inner_storage_->end() && !it->second->isExpired()) {
-        auto keylock = it->second->lock();
-        auto* string_item = dynamic_cast<StringItem*>(it->second.get());
-        if (string_item) {
-            std::string current_value = string_item->getValue();
-            if (Utils::isNumeric(current_value)) {
-                int64_t new_value = Utils::stringToInt(current_value) + 1;
-                string_item->setValue(Utils::intToString(new_value));
-                return new_value;
-            }
-        }
+int64_t StorageEngine::incr(TransactionID tx_id, const Key& key) {
+    auto item = inner_storage_.get(key);
+    if (!item || item->isExpired()) {
+        // 键不存在，创建新的数值项
+        auto new_item = createStringItem("1");
+        inner_storage_.set(tx_id, key, std::move(new_item));
+        return 1;
     }
-    // 键不存在或不是数字，设置为1
-    readlock.unlock();
-    auto writelock = inner_storage_->wlock();
-    (*inner_storage_)[key] = createStringItem("1");
-    total_keys_++;
-    return 1;
+    
+    auto* string_item = dynamic_cast<StringItem*>(item);
+    if (!string_item) {
+        return -1; // 不是字符串类型
+    }
+    
+    // 更新数值
+    std::string current_value = string_item->getValue();
+    if (Utils::isNumeric(current_value)) {
+        int64_t new_value = Utils::stringToInt(current_value) + 1;
+        string_item->setValue(Utils::intToString(new_value));
+        return new_value;
+    }
+    
+    return -1; // 不是数值类型
 }
 
-int64_t StorageEngine::decr(const Key& key) {
-    auto readlock = inner_storage_->rlock();
-    
-    auto it = inner_storage_->find(key);
-    if (it != inner_storage_->end() && !it->second->isExpired()) {
-        auto keylock = it->second->lock();
-        auto* string_item = dynamic_cast<StringItem*>(it->second.get());
-        if (string_item) {
-            std::string current_value = string_item->getValue();
-            if (Utils::isNumeric(current_value)) {
-                int64_t new_value = Utils::stringToInt(current_value) - 1;
-                string_item->setValue(Utils::intToString(new_value));
-                return new_value;
-            }
-        }
+int64_t StorageEngine::decr(TransactionID tx_id, const Key& key) {
+    auto item = inner_storage_.get(key);
+    if (!item || item->isExpired()) {
+        // 键不存在，创建新的数值项
+        auto new_item = createStringItem("-1");
+        inner_storage_.set(tx_id, key, std::move(new_item));
+        return -1;
     }
     
-    // 键不存在或不是数字，设置为-1
-    readlock.unlock();
-    auto writelock = inner_storage_->wlock();
-    (*inner_storage_)[key] = createStringItem("-1");
-    total_keys_++;
-    return -1;
+    auto* string_item = dynamic_cast<StringItem*>(item);
+    if (!string_item) {
+        return -1; // 不是字符串类型
+    }
+    
+    // 更新数值
+    std::string current_value = string_item->getValue();
+    if (Utils::isNumeric(current_value)) {
+        int64_t new_value = Utils::stringToInt(current_value) - 1;
+        string_item->setValue(Utils::intToString(new_value));
+        return new_value;
+    }
+    
+    return -1; // 不是数值类型
 }
 
 void StorageEngine::flush() {
-    auto writelock = inner_storage_->wlock();
-    inner_storage_->clear();
+    auto writelock = inner_storage_.wlock();
+    inner_storage_.clear();
     total_keys_ = 0;
     expired_keys_ = 0;
 }
 
 size_t StorageEngine::size() const {
-    auto readlock = inner_storage_->rlock();
-    return inner_storage_->size();
+    auto readlock = inner_storage_.rlock();
+    return inner_storage_.size();
 }
 
 std::vector<Key> StorageEngine::keys() const {
-    auto readlock = inner_storage_->rlock();
+    auto readlock = inner_storage_.rlock();
     std::vector<Key> result;
-    result.reserve(inner_storage_->size());
+    result.reserve(inner_storage_.size());
     
-    for (const auto& pair : *inner_storage_) {
+    for (const auto& pair : inner_storage_) {
         if (!isKeyExpired(pair.first)) {
             result.push_back(pair.first);
         }
@@ -253,12 +183,12 @@ std::string StorageEngine::getMemoryStats() const {
 }
 
 void StorageEngine::cleanupExpiredKeys() {
-    auto writelock = inner_storage_->wlock();
+    auto writelock = inner_storage_.wlock();
     
-    auto it = inner_storage_->begin();
-    while (it != inner_storage_->end()) {
+    auto it = inner_storage_.begin();
+    while (it != inner_storage_.end()) {
         if (it->second->isExpired()) {
-            it = inner_storage_->erase(it);
+            it = inner_storage_.erase(it);
             expired_keys_++;
         } else {
             ++it;
@@ -267,14 +197,14 @@ void StorageEngine::cleanupExpiredKeys() {
 }
 
 void StorageEngine::cleanupEmptyKey() {
-    auto writelock = inner_storage_->wlock();
+    auto writelock = inner_storage_.wlock();
     
-    auto it = inner_storage_->begin();
-    while (it != inner_storage_->end()) {
+    auto it = inner_storage_.begin();
+    while (it != inner_storage_.end()) {
         HashItem* hash_item = dynamic_cast<HashItem*>(it->second.get());
         if (hash_item) {
             if (hash_item->size() == 0) {
-                it = inner_storage_->erase(it);
+                it = inner_storage_.erase(it);
                 total_keys_--;
             } else {
                 ++it;
@@ -284,7 +214,7 @@ void StorageEngine::cleanupEmptyKey() {
         ListItem* list_item = dynamic_cast<ListItem*>(it->second.get());
         if (list_item) {
             if (list_item->empty()) {
-                it = inner_storage_->erase(it);
+                it = inner_storage_.erase(it);
                 total_keys_--;
             } else {
                 ++it;
@@ -294,7 +224,7 @@ void StorageEngine::cleanupEmptyKey() {
         SetItem* set_item = dynamic_cast<SetItem*>(it->second.get());
         if (set_item) {
             if (set_item->empty()) {
-                it = inner_storage_->erase(it);
+                it = inner_storage_.erase(it);
                 total_keys_--;
             } else {
                 ++it;
@@ -304,7 +234,7 @@ void StorageEngine::cleanupEmptyKey() {
         ZSetItem* zset_item = dynamic_cast<ZSetItem*>(it->second.get());
         if (zset_item) {
             if (zset_item->empty()) {
-                it = inner_storage_->erase(it);
+                it = inner_storage_.erase(it);
                 total_keys_--;
             } else {
                 ++it;
@@ -327,17 +257,17 @@ bool StorageEngine::loadRDB(const std::string& filename) {
 }
 
 bool StorageEngine::isKeyExpired(const Key& key) const {
-    auto it = inner_storage_->find(key);
-    if (it == inner_storage_->end()) {
+    auto it = inner_storage_.find(key);
+    if (it == inner_storage_.end()) {
         return false;
     }
     return it->second->isExpired();
 }
 
 void StorageEngine::removeExpiredKey(const Key& key) {
-    auto it = inner_storage_->find(key);
-    if (it != inner_storage_->end()) {
-        inner_storage_->erase(it);
+    auto it = inner_storage_.find(key);
+    if (it != inner_storage_.end()) {
+        inner_storage_.erase(it);
         expired_keys_++;
     }
 }
@@ -390,47 +320,35 @@ std::unique_ptr<DataItem> StorageEngine::createBitmapItem(Timestamp expire_time)
     return std::make_unique<BitmapItem>(expire_time);
 }
 
-bool StorageEngine::hset(const Key& key, const Value& field, const Value& value) {
-    auto readlock = inner_storage_->rlock();
-    auto writelock = inner_storage_->wlock_deferred();
-    HashItem* hash_item = nullptr;
-    auto it = inner_storage_->find(key);
-    if (it == inner_storage_->end() || it->second->isExpired()) {
-        readlock.unlock();
-        writelock.lock();
-        it = inner_storage_->find(key);
-        if (it == inner_storage_->end() || it->second->isExpired()) {
-            auto is_newkey = (it == inner_storage_->end());
-            // 创建新的哈希项
-            auto new_item = createHashItem();
-            hash_item = dynamic_cast<HashItem*>(new_item.get());
-            assert(hash_item != nullptr);
-            it = inner_storage_->insert_or_assign(key, std::move(new_item)).first;
-            it = inner_storage_->find(key);
-            if (is_newkey) {
-                total_keys_++;
-            }
+bool StorageEngine::hset(TransactionID tx_id, const Key& key, const Value& field, const Value& value) {
+    DataItem* item = getDataItem(tx_id, key);
+    if (!item || item->isExpired()) {
+        // 键不存在，创建新的哈希项
+        auto new_hash_item = createHashItem();
+        auto* hash_item_ptr = dynamic_cast<HashItem*>(new_hash_item.get());
+        if (hash_item_ptr && hash_item_ptr->setField(field, value)) {
+            return inner_storage_.set(tx_id, key, std::move(new_hash_item));
         }
+        return false;
     }
-    auto keylock = it->second->lock();
-    // 检查是否是哈希类型
-    hash_item = dynamic_cast<HashItem*>(it->second.get());
+    
+    auto* hash_item = dynamic_cast<HashItem*>(item);
     if (!hash_item) {
         return false; // 键存在但不是哈希类型
     }
+    
+    // 更新哈希项
     return hash_item->setField(field, value);
 }
 
-std::string StorageEngine::hget(const Key& key, const Value& field) {
-    auto readlock = inner_storage_->rlock();
-    
-    auto it = inner_storage_->find(key);
-    if (it == inner_storage_->end() || it->second->isExpired()) {
+std::string StorageEngine::hget(TransactionID tx_id, const Key& key, const Value& field) {
+    // 使用getDataItem方法获取数据项
+    DataItem* item = getDataItem(tx_id, key);
+    if (!item || item->isExpired()) {
         return "";
     }
-    auto keylock = it->second->rlock();
     
-    auto* hash_item = dynamic_cast<HashItem*>(it->second.get());
+    auto* hash_item = dynamic_cast<HashItem*>(item);
     if (!hash_item) {
         return "";
     }
@@ -445,16 +363,14 @@ std::string StorageEngine::hget(const Key& key, const Value& field) {
     return "";
 }
 
-std::vector<std::pair<Value, Value>> StorageEngine::hgetall(const Key& key) {
-    auto readlock = inner_storage_->rlock();
-    
-    auto it = inner_storage_->find(key);
-    if (it == inner_storage_->end() || it->second->isExpired()) {
+std::vector<std::pair<Value, Value>> StorageEngine::hgetall(TransactionID tx_id, const Key& key) {
+    // 使用getDataItem方法获取数据项
+    DataItem* item = getDataItem(tx_id, key);
+    if (!item || item->isExpired()) {
         return {};
     }
-    auto keylock = it->second->rlock();
     
-    auto* hash_item = dynamic_cast<HashItem*>(it->second.get());
+    auto* hash_item = dynamic_cast<HashItem*>(item);
     if (!hash_item) {
         return {};
     }
@@ -466,16 +382,14 @@ std::vector<std::pair<Value, Value>> StorageEngine::hgetall(const Key& key) {
     return hash_item->getAll();
 }
 
-bool StorageEngine::hdel(const Key& key, const Value& field) {
-    auto readlock = inner_storage_->rlock();
-    
-    auto it = inner_storage_->find(key);
-    if (it == inner_storage_->end() || it->second->isExpired()) {
+bool StorageEngine::hdel(TransactionID tx_id, const Key& key, const Value& field) {
+    // 使用getDataItem方法获取数据项
+    DataItem* item = getDataItem(tx_id, key);
+    if (!item || item->isExpired()) {
         return false;
     }
-    auto keylock = it->second->lock();
-
-    auto* hash_item = dynamic_cast<HashItem*>(it->second.get());
+    
+    auto* hash_item = dynamic_cast<HashItem*>(item);
     if (!hash_item) {
         return false;
     }
@@ -484,16 +398,13 @@ bool StorageEngine::hdel(const Key& key, const Value& field) {
     return result;
 }
 
-bool StorageEngine::hexists(const Key& key, const Value& field) {
-    auto readlock = inner_storage_->rlock();
-    
-    auto it = inner_storage_->find(key);
-    if (it == inner_storage_->end() || it->second->isExpired()) {
+bool StorageEngine::hexists(TransactionID tx_id, const Key& key, const Value& field) {
+    DataItem* item = getDataItem(tx_id, key);
+    if (!item || item->isExpired()) {
         return false;
     }
-    auto keylock = it->second->rlock();
-
-    auto* hash_item = dynamic_cast<HashItem*>(it->second.get());
+    
+    auto* hash_item = dynamic_cast<HashItem*>(item);
     if (!hash_item) {
         return false;
     }
@@ -501,16 +412,13 @@ bool StorageEngine::hexists(const Key& key, const Value& field) {
     return hash_item->existsField(field);
 }
 
-std::vector<Value> StorageEngine::hkeys(const Key& key) {
-    auto readlock = inner_storage_->rlock();
-    
-    auto it = inner_storage_->find(key);
-    if (it == inner_storage_->end() || it->second->isExpired()) {
+std::vector<Value> StorageEngine::hkeys(TransactionID tx_id, const Key& key) {
+    DataItem* item = getDataItem(tx_id, key);
+    if (!item || item->isExpired()) {
         return {};
     }
-    auto keylock = it->second->rlock();
-
-    auto* hash_item = dynamic_cast<HashItem*>(it->second.get());
+    
+    auto* hash_item = dynamic_cast<HashItem*>(item);
     if (!hash_item) {
         return {};
     }
@@ -518,20 +426,16 @@ std::vector<Value> StorageEngine::hkeys(const Key& key) {
     // 更新访问时间和频率
     hash_item->touch();
     hash_item->incrementFrequency();
-    
     return hash_item->getKeys();
 }
 
-std::vector<Value> StorageEngine::hvals(const Key& key) {
-    auto readlock = inner_storage_->rlock();
-    
-    auto it = inner_storage_->find(key);
-    if (it == inner_storage_->end() || it->second->isExpired()) {
+std::vector<Value> StorageEngine::hvals(TransactionID tx_id, const Key& key) {
+    DataItem* item = getDataItem(tx_id, key);
+    if (!item || item->isExpired()) {
         return {};
     }
-    auto keylock = it->second->rlock();
     
-    auto* hash_item = dynamic_cast<HashItem*>(it->second.get());
+    auto* hash_item = dynamic_cast<HashItem*>(item);
     if (!hash_item) {
         return {};
     }
@@ -539,20 +443,16 @@ std::vector<Value> StorageEngine::hvals(const Key& key) {
     // 更新访问时间和频率
     hash_item->touch();
     hash_item->incrementFrequency();
-    
     return hash_item->getValues();
 }
 
-size_t StorageEngine::hlen(const Key& key) {
-    auto readlock = inner_storage_->rlock();
-    
-    auto it = inner_storage_->find(key);
-    if (it == inner_storage_->end() || it->second->isExpired()) {
+size_t StorageEngine::hlen(TransactionID tx_id, const Key& key) {
+    DataItem* item = getDataItem(tx_id, key);
+    if (!item || item->isExpired()) {
         return 0;
     }
-    auto keylock = it->second->rlock();
     
-    auto* hash_item = dynamic_cast<HashItem*>(it->second.get());
+    auto* hash_item = dynamic_cast<HashItem*>(item);
     if (!hash_item) {
         return 0;
     }
@@ -560,104 +460,88 @@ size_t StorageEngine::hlen(const Key& key) {
     return hash_item->size();
 }
 
-size_t StorageEngine::lpush(const Key& key, const Value& value) {
-    auto readlock = inner_storage_->rlock();
-    auto writelock = inner_storage_->wlock_deferred();
-    
-    auto it = inner_storage_->find(key);
-    ListItem* list_item = nullptr;
-    
-    if (it == inner_storage_->end() || it->second->isExpired()) {
-        bool is_newkey = (it == inner_storage_->end());
-        // 创建新的列表项
-        readlock.unlock();
-        writelock.lock();
-        it = inner_storage_->insert_or_assign(key, createListItem()).first;
-        
-        list_item = dynamic_cast<ListItem*>(it->second.get());
-        if (is_newkey) {
-            total_keys_++;
+size_t StorageEngine::lpush(TransactionID tx_id, const Key& key, const Value& value) {
+    DataItem* item = getDataItem(tx_id, key);
+    if (!item || item->isExpired()) {
+        // 键不存在，创建新的列表项
+        auto new_list_item = createListItem();
+        auto* list_item_ptr = dynamic_cast<ListItem*>(new_list_item.get());
+        if (list_item_ptr) {
+            list_item_ptr->lpush(value);
+            if (inner_storage_.set(tx_id, key, std::move(new_list_item))) {
+                return list_item_ptr->size();
+            }
         }
-    } else {
-        // 检查是否是列表类型
-        list_item = dynamic_cast<ListItem*>(it->second.get());
-        if (!list_item) {
-            return 0; // 键存在但不是列表类型
-        }
+        return 0;
     }
-    auto keylock = it->second->lock();
+    
+    auto* list_item = dynamic_cast<ListItem*>(item);
+    if (!list_item) {
+        return 0; // 键存在但不是列表类型
+    }
+    
+    // 更新列表项
     return list_item->lpush(value);
 }
 
-size_t StorageEngine::rpush(const Key& key, const Value& value) {
-    auto readlock = inner_storage_->rlock();
-    auto writelock = inner_storage_->wlock_deferred();
-    
-    auto it = inner_storage_->find(key);
-    ListItem* list_item = nullptr;
-    
-    if (it == inner_storage_->end() || it->second->isExpired()) {
-        bool is_newkey = (it == inner_storage_->end());
-        // 创建新的列表项
-        readlock.unlock();
-        writelock.lock();
-        it = inner_storage_->insert_or_assign(key, createListItem()).first;
-        list_item = dynamic_cast<ListItem*>(it->second.get());
-        if (is_newkey) {
-            total_keys_++;
+size_t StorageEngine::rpush(TransactionID tx_id, const Key& key, const Value& value) {
+    DataItem* item = getDataItem(tx_id, key);
+    if (!item || item->isExpired()) {
+        // 键不存在，创建新的列表项
+        auto new_list_item = createListItem();
+        auto* list_item_ptr = dynamic_cast<ListItem*>(new_list_item.get());
+        if (list_item_ptr) {
+            list_item_ptr->rpush(value);
+            if (inner_storage_.set(tx_id, key, std::move(new_list_item))) {
+                return list_item_ptr->size();
+            }
         }
-    } else {
-        // 检查是否是列表类型
-        list_item = dynamic_cast<ListItem*>(it->second.get());
-        if (!list_item) {
-            return 0; // 键存在但不是列表类型
-        }
+        return 0;
     }
-    auto keylock = it->second->lock();
+    
+    auto* list_item = dynamic_cast<ListItem*>(item);
+    if (!list_item) {
+        return 0; // 键存在但不是列表类型
+    }
+    
+    // 更新列表项
     return list_item->rpush(value);
 }
 
-std::string StorageEngine::lpop(const Key& key) {
-    auto readlock = inner_storage_->rlock();
-    
-    auto it = inner_storage_->find(key);
-    if (it == inner_storage_->end() || it->second->isExpired()) {
+std::string StorageEngine::lpop(TransactionID tx_id, const Key& key) {
+    DataItem* item = getDataItem(tx_id, key);
+    if (!item || item->isExpired()) {
         return "";
     }
     
-    auto* list_item = dynamic_cast<ListItem*>(it->second.get());
+    auto* list_item = dynamic_cast<ListItem*>(item);
     if (!list_item) {
         return "";
     }
     
     Value value;
-    auto keylock = it->second->lock();
     if (list_item->lpop(value)) {
         // 更新访问时间和频率
         list_item->touch();
         list_item->incrementFrequency();
-
         return value;
     }
     
     return "";
 }
 
-std::string StorageEngine::rpop(const Key& key) {
-    auto readlock = inner_storage_->rlock();
-    
-    auto it = inner_storage_->find(key);
-    if (it == inner_storage_->end() || it->second->isExpired()) {
+std::string StorageEngine::rpop(TransactionID tx_id, const Key& key) {
+    DataItem* item = getDataItem(tx_id, key);
+    if (!item || item->isExpired()) {
         return "";
     }
     
-    auto* list_item = dynamic_cast<ListItem*>(it->second.get());
+    auto* list_item = dynamic_cast<ListItem*>(item);
     if (!list_item) {
         return "";
     }
     
     Value value;
-    auto keylock = it->second->lock();
     if (list_item->rpop(value)) {
         // 更新访问时间和频率
         list_item->touch();
@@ -668,43 +552,31 @@ std::string StorageEngine::rpop(const Key& key) {
     return "";
 }
 
-size_t StorageEngine::llen(const Key& key) {
-    auto readlock = inner_storage_->rlock();
-    
-    auto it = inner_storage_->find(key);
-    if (it == inner_storage_->end() || it->second->isExpired()) {
+size_t StorageEngine::llen(TransactionID tx_id, const Key& key) {
+    DataItem* item = getDataItem(tx_id, key);
+    if (!item || item->isExpired()) {
         return 0;
     }
     
-    auto* list_item = dynamic_cast<ListItem*>(it->second.get());
+    auto* list_item = dynamic_cast<ListItem*>(item);
     if (!list_item) {
         return 0;
     }
     
-    // 更新访问时间和频率
-    list_item->touch();
-    list_item->incrementFrequency();
-    auto keylock = it->second->rlock();
     return list_item->size();
 }
 
-std::vector<Value> StorageEngine::lrange(const Key& key, size_t start, size_t stop) {
-    auto readlock = inner_storage_->rlock();
-    
-    auto it = inner_storage_->find(key);
-    if (it == inner_storage_->end() || it->second->isExpired()) {
+std::vector<Value> StorageEngine::lrange(TransactionID tx_id, const Key& key, size_t start, size_t stop) {
+    DataItem* item = getDataItem(tx_id, key);
+    if (!item || item->isExpired()) {
         return {};
     }
     
-    auto* list_item = dynamic_cast<ListItem*>(it->second.get());
+    auto* list_item = dynamic_cast<ListItem*>(item);
     if (!list_item) {
         return {};
     }
     
-    // 更新访问时间和频率
-    list_item->touch();
-    list_item->incrementFrequency();
-    auto keylock = it->second->rlock();
     return list_item->lrange(start, stop);
 }
 
@@ -762,483 +634,363 @@ std::unique_ptr<DataItem> DataItemFactory::create(DataType type, const std::stri
     }
 }
 
-size_t StorageEngine::sadd(const Key& key, const std::vector<Value>& members) {
-    auto readlock = inner_storage_->rlock();
-    auto writelock = inner_storage_->wlock_deferred();
-    auto it = inner_storage_->find(key);
-    SetItem* set_item = nullptr;
-    
-    if (it == inner_storage_->end() || it->second->isExpired()) {
-        readlock.unlock();
-        writelock.lock();
-        it = inner_storage_->find(key);
-        if (it == inner_storage_->end() || it->second->isExpired()) {
-            // 创建新的集合项
-            it = inner_storage_->insert_or_assign(key, createSetItem()).first;
-            set_item = dynamic_cast<SetItem*>((*inner_storage_)[key].get());
-            total_keys_++;
+size_t StorageEngine::sadd(TransactionID tx_id, const Key& key, const std::vector<Value>& members) {
+    DataItem* item = getDataItem(tx_id, key);
+    if (!item || item->isExpired()) {
+        // 键不存在，创建新的集合项
+        auto new_set_item = createSetItem();
+        auto* set_item_ptr = dynamic_cast<SetItem*>(new_set_item.get());
+        if (set_item_ptr) {
+            size_t result = set_item_ptr->sadd(members);
+            if (inner_storage_.set(tx_id, key, std::move(new_set_item))) {
+                return result;
+            }
         }
+        return 0;
     }
-    // 检查是否是集合类型
-    set_item = dynamic_cast<SetItem*>(it->second.get());
+    
+    auto* set_item = dynamic_cast<SetItem*>(item);
     if (!set_item) {
         return 0; // 键存在但不是集合类型
     }
+    
     // 添加多个元素并返回成功添加的个数
-    auto keylock = it->second->lock();
     return set_item->sadd(members);
 }
 
-size_t StorageEngine::srem(const Key& key, const std::vector<Value>& members) {
-    auto readlock = inner_storage_->rlock();
-    auto writelock = inner_storage_->wlock_deferred();
-
-    auto it = inner_storage_->find(key);
-    if (it == inner_storage_->end() || it->second->isExpired()) {
+size_t StorageEngine::srem(TransactionID tx_id, const Key& key, const std::vector<Value>& members) {
+    DataItem* item = getDataItem(tx_id, key);
+    if (!item || item->isExpired()) {
         return 0; // 键不存在
     }
     
     // 检查是否是集合类型
-    SetItem* set_item = dynamic_cast<SetItem*>(it->second.get());
+    auto* set_item = dynamic_cast<SetItem*>(item);
     if (!set_item) {
         return 0; // 键存在但不是集合类型
     }
     
     // 删除多个元素并返回成功删除的个数
-    auto keylock = it->second->lock();
-    size_t removed_count = set_item->srem(members);
-
-    return removed_count;
+    return set_item->srem(members);
 }
 
-std::vector<Value> StorageEngine::smembers(const Key& key) {
-    auto readlock = inner_storage_->rlock();
-    
-    auto it = inner_storage_->find(key);
-    if (it == inner_storage_->end() || it->second->isExpired()) {
+std::vector<Value> StorageEngine::smembers(TransactionID tx_id, const Key& key) {
+    DataItem* item = getDataItem(tx_id, key);
+    if (!item || item->isExpired()) {
         return {};
     }
     
-    auto* set_item = dynamic_cast<SetItem*>(it->second.get());
+    auto* set_item = dynamic_cast<SetItem*>(item);
     if (!set_item) {
         return {};
     }
     
-    // 更新访问时间和频率
-    set_item->touch();
-    set_item->incrementFrequency();
-    auto keylock = it->second->rlock();
     return set_item->smembers();
 }
 
-bool StorageEngine::sismember(const Key& key, const Value& member) {
-    auto readlock = inner_storage_->rlock();
-    
-    auto it = inner_storage_->find(key);
-    if (it == inner_storage_->end() || it->second->isExpired()) {
+bool StorageEngine::sismember(TransactionID tx_id, const Key& key, const Value& member) {
+    DataItem* item = getDataItem(tx_id, key);
+    if (!item || item->isExpired()) {
         return false;
     }
     
-    auto* set_item = dynamic_cast<SetItem*>(it->second.get());
+    auto* set_item = dynamic_cast<SetItem*>(item);
     if (!set_item) {
         return false;
     }
     
-    // 更新访问时间和频率
-    set_item->touch();
-    set_item->incrementFrequency();
-    auto keylock = it->second->rlock();
     return set_item->sismember(member);
 }
 
-size_t StorageEngine::scard(const Key& key) {
-    auto readlock = inner_storage_->rlock();
-    
-    auto it = inner_storage_->find(key);
-    if (it == inner_storage_->end() || it->second->isExpired()) {
+size_t StorageEngine::scard(TransactionID tx_id, const Key& key) {
+    DataItem* item = getDataItem(tx_id, key);
+    if (!item || item->isExpired()) {
         return 0;
     }
     
-    auto* set_item = dynamic_cast<SetItem*>(it->second.get());
+    auto* set_item = dynamic_cast<SetItem*>(item);
     if (!set_item) {
         return 0;
     }
     
-    // 更新访问时间和频率
-    set_item->touch();
-    set_item->incrementFrequency();
-    auto keylock = it->second->rlock();
     return set_item->scard();
 }
 
-DataItem* StorageEngine::getDataItem(const Key& key) {
-    auto readlock = inner_storage_->rlock();
-    
-    auto it = inner_storage_->find(key);
-    if (it == inner_storage_->end() || it->second->isExpired()) {
+DataItem* StorageEngine::getDataItem(TransactionID tx_id, const Key& key) {
+    DataItem* item = inner_storage_.get(key);
+    if (!item || item->isExpired()) {
         return nullptr;
     }
-    auto keylock = it->second->rlock();
-    return it->second.get();
+    return item;
 }
 
 void StorageEngine::setDataItem(const Key& key, std::unique_ptr<DataItem> item) {
     assert(item.get());
-    auto writelock = inner_storage_->wlock();
+    auto writelock = inner_storage_.wlock();
 
-    auto it = inner_storage_->find(key);
-    if (it == inner_storage_->end()) {
+    auto it = inner_storage_.find(key);
+    if (it == inner_storage_.end()) {
         // 新键
         total_keys_++;
     }
     // 更新现有键
-    it = inner_storage_->insert_or_assign(key, std::move(item)).first;
+    it = inner_storage_.insert_or_assign(key, std::move(item)).first;
 }
 
-size_t StorageEngine::zadd(const Key& key, const std::vector<std::pair<Value, double>>& members_with_scores) {
-    auto readlock = inner_storage_->rlock();
-    auto writelock = inner_storage_->wlock_deferred();
-    
-    auto it = inner_storage_->find(key);
-    ZSetItem* zset_item = nullptr;
-    
-    if (it == inner_storage_->end() || it->second->isExpired()) {
-        readlock.unlock();
-        writelock.lock();
-        it = inner_storage_->find(key);
-        if (it == inner_storage_->end()) {
-            // 创建新的有序集合项
-            it = inner_storage_->insert_or_assign(key, createZSetItem()).first;
-            zset_item = dynamic_cast<ZSetItem*>((*inner_storage_)[key].get());
-            total_keys_++;
+size_t StorageEngine::zadd(TransactionID tx_id, const Key& key, const std::vector<std::pair<Value, double>>& members_with_scores) {
+    DataItem* item = getDataItem(tx_id, key);
+    if (!item || item->isExpired()) {
+        // 键不存在，创建新的有序集合项
+        auto new_zset_item = createZSetItem();
+        auto* zset_item_ptr = dynamic_cast<ZSetItem*>(new_zset_item.get());
+        if (zset_item_ptr) {
+            size_t result = zset_item_ptr->zadd(members_with_scores);
+            if (inner_storage_.set(tx_id, key, std::move(new_zset_item))) {
+                return result;
+            }
         }
+        return 0;
     }
-    // 检查是否是有序集合类型
-    zset_item = dynamic_cast<ZSetItem*>(it->second.get());
+    
+    auto* zset_item = dynamic_cast<ZSetItem*>(item);
     if (!zset_item) {
         return 0; // 键存在但不是有序集合类型
     }
     
     // 添加多个元素并返回成功添加的个数
-    auto keylock = it->second->lock();
     return zset_item->zadd(members_with_scores);
 }
 
-size_t StorageEngine::zrem(const Key& key, const std::vector<Value>& members) {
-    auto readlock = inner_storage_->rlock();
-    auto writelock = inner_storage_->wlock_deferred();
-    
-    auto it = inner_storage_->find(key);
-    if (it == inner_storage_->end() || it->second->isExpired()) {
+size_t StorageEngine::zrem(TransactionID tx_id, const Key& key, const std::vector<Value>& members) {
+    DataItem* item = getDataItem(tx_id, key);
+    if (!item || item->isExpired()) {
         return 0; // 键不存在
     }
     
     // 检查是否是有序集合类型
-    ZSetItem* zset_item = dynamic_cast<ZSetItem*>(it->second.get());
+    auto* zset_item = dynamic_cast<ZSetItem*>(item);
     if (!zset_item) {
         return 0; // 键存在但不是有序集合类型
     }
     
     // 删除多个元素并返回成功删除的个数
-    auto keylock = it->second->lock();
-    size_t removed_count = zset_item->zrem(members);
-    return removed_count;
+    return zset_item->zrem(members);
 }
 
-bool StorageEngine::zscore(const Key& key, const Value& member, double& score) {
-    auto readlock = inner_storage_->rlock();
-    
-    auto it = inner_storage_->find(key);
-    if (it == inner_storage_->end() || it->second->isExpired()) {
+bool StorageEngine::zscore(TransactionID tx_id, const Key& key, const Value& member, double& score) {
+    DataItem* item = getDataItem(tx_id, key);
+    if (!item || item->isExpired()) {
         return false;
     }
     
-    ZSetItem* zset_item = dynamic_cast<ZSetItem*>(it->second.get());
+    auto* zset_item = dynamic_cast<ZSetItem*>(item);
     if (!zset_item) {
         return false;
     }
     
-    // 更新访问时间和频率
-    zset_item->touch();
-    zset_item->incrementFrequency();
-    auto keylock = zset_item->rlock();
     return zset_item->zscore(member, score);
 }
 
-bool StorageEngine::zismember(const Key& key, const Value& member) {
-    auto readlock = inner_storage_->rlock();
-    
-    auto it = inner_storage_->find(key);
-    if (it == inner_storage_->end() || it->second->isExpired()) {
+bool StorageEngine::zismember(TransactionID tx_id, const Key& key, const Value& member) {
+    DataItem* item = getDataItem(tx_id, key);
+    if (!item || item->isExpired()) {
         return false;
     }
     
-    ZSetItem* zset_item = dynamic_cast<ZSetItem*>(it->second.get());
+    auto* zset_item = dynamic_cast<ZSetItem*>(item);
     if (!zset_item) {
         return false;
     }
     
-    // 更新访问时间和频率
-    zset_item->touch();
-    zset_item->incrementFrequency();
-    auto keylock = zset_item->rlock();
     return zset_item->zismember(member);
 }
 
-bool StorageEngine::zrank(const Key& key, const Value& member, size_t& rank) {
-    auto readlock = inner_storage_->rlock();
-    
-    auto it = inner_storage_->find(key);
-    if (it == inner_storage_->end() || it->second->isExpired()) {
+bool StorageEngine::zrank(TransactionID tx_id, const Key& key, const Value& member, size_t& rank) {
+    DataItem* item = getDataItem(tx_id, key);
+    if (!item || item->isExpired()) {
         return false;
     }
     
-    ZSetItem* zset_item = dynamic_cast<ZSetItem*>(it->second.get());
+    auto* zset_item = dynamic_cast<ZSetItem*>(item);
     if (!zset_item) {
         return false;
     }
     
-    // 更新访问时间和频率
-    zset_item->touch();
-    zset_item->incrementFrequency();
-    auto keylock = zset_item->rlock();
     return zset_item->zrank(member, rank);
 }
 
-bool StorageEngine::zrevrank(const Key& key, const Value& member, size_t& rank) {
-    auto readlock = inner_storage_->rlock();
-    
-    auto it = inner_storage_->find(key);
-    if (it == inner_storage_->end() || it->second->isExpired()) {
+bool StorageEngine::zrevrank(TransactionID tx_id, const Key& key, const Value& member, size_t& rank) {
+    DataItem* item = getDataItem(tx_id, key);
+    if (!item || item->isExpired()) {
         return false;
     }
     
-    ZSetItem* zset_item = dynamic_cast<ZSetItem*>(it->second.get());
+    auto* zset_item = dynamic_cast<ZSetItem*>(item);
     if (!zset_item) {
         return false;
     }
     
-    // 更新访问时间和频率
-    zset_item->touch();
-    zset_item->incrementFrequency();
-    auto keylock = zset_item->rlock();
     return zset_item->zrevrank(member, rank);
 }
 
-std::vector<std::pair<Value, double>> StorageEngine::zrange(const Key& key, size_t start, size_t stop) {
-    auto readlock = inner_storage_->rlock();
-    
-    auto it = inner_storage_->find(key);
-    if (it == inner_storage_->end() || it->second->isExpired()) {
+std::vector<std::pair<Value, double>> StorageEngine::zrange(TransactionID tx_id, const Key& key, size_t start, size_t stop) {
+    DataItem* item = getDataItem(tx_id, key);
+    if (!item || item->isExpired()) {
         return {};
     }
     
-    auto* zset_item = dynamic_cast<ZSetItem*>(it->second.get());
+    auto* zset_item = dynamic_cast<ZSetItem*>(item);
     if (!zset_item) {
         return {};
     }
     
-    // 更新访问时间和频率
-    zset_item->touch();
-    zset_item->incrementFrequency();
-    auto keylock = zset_item->rlock();
     return zset_item->zrange(start, stop);
 }
 
-std::vector<std::pair<Value, double>> StorageEngine::zrevrange(const Key& key, size_t start, size_t stop) {
-    auto readlock = inner_storage_->rlock();
-    
-    auto it = inner_storage_->find(key);
-    if (it == inner_storage_->end() || it->second->isExpired()) {
+std::vector<std::pair<Value, double>> StorageEngine::zrevrange(TransactionID tx_id, const Key& key, size_t start, size_t stop) {
+    DataItem* item = getDataItem(tx_id, key);
+    if (!item || item->isExpired()) {
         return {};
     }
     
-    auto* zset_item = dynamic_cast<ZSetItem*>(it->second.get());
+    auto* zset_item = dynamic_cast<ZSetItem*>(item);
     if (!zset_item) {
         return {};
     }
     
-    // 更新访问时间和频率
-    zset_item->touch();
-    zset_item->incrementFrequency();
-    auto keylock = zset_item->rlock();
     return zset_item->zrevrange(start, stop);
 }
 
-std::vector<std::pair<Value, double>> StorageEngine::zrangebyscore(const Key& key, double min, double max) {
-    auto readlock = inner_storage_->rlock();
-    
-    auto it = inner_storage_->find(key);
-    if (it == inner_storage_->end() || it->second->isExpired()) {
+std::vector<std::pair<Value, double>> StorageEngine::zrangebyscore(TransactionID tx_id, const Key& key, double min, double max) {
+    DataItem* item = getDataItem(tx_id, key);
+    if (!item || item->isExpired()) {
         return {};
     }
     
-    auto* zset_item = dynamic_cast<ZSetItem*>(it->second.get());
+    auto* zset_item = dynamic_cast<ZSetItem*>(item);
     if (!zset_item) {
         return {};
     }
     
-    // 更新访问时间和频率
-    zset_item->touch();
-    zset_item->incrementFrequency();
-    auto keylock = zset_item->rlock();
     return zset_item->zrangebyscore(min, max);
 }
 
-std::vector<std::pair<Value, double>> StorageEngine::zrevrangebyscore(const Key& key, double max, double min) {
-    auto readlock = inner_storage_->rlock();
-    
-    auto it = inner_storage_->find(key);
-    if (it == inner_storage_->end() || it->second->isExpired()) {
+std::vector<std::pair<Value, double>> StorageEngine::zrevrangebyscore(TransactionID tx_id, const Key& key, double max, double min) {
+    DataItem* item = getDataItem(tx_id, key);
+    if (!item || item->isExpired()) {
         return {};
     }
     
-    auto* zset_item = dynamic_cast<ZSetItem*>(it->second.get());
+    auto* zset_item = dynamic_cast<ZSetItem*>(item);
     if (!zset_item) {
         return {};
     }
     
-    // 更新访问时间和频率
-    zset_item->touch();
-    zset_item->incrementFrequency();
-    auto keylock = zset_item->rlock();
     return zset_item->zrevrangebyscore(max, min);
 }
 
-size_t StorageEngine::zcount(const Key& key, double min, double max) {
-    auto readlock = inner_storage_->rlock();
-    
-    auto it = inner_storage_->find(key);
-    if (it == inner_storage_->end() || it->second->isExpired()) {
+size_t StorageEngine::zcount(TransactionID tx_id, const Key& key, double min, double max) {
+    DataItem* item = getDataItem(tx_id, key);
+    if (!item || item->isExpired()) {
         return 0;
     }
     
-    ZSetItem* zset_item = dynamic_cast<ZSetItem*>(it->second.get());
+    auto* zset_item = dynamic_cast<ZSetItem*>(item);
     if (!zset_item) {
         return 0;
     }
-    auto keylock = zset_item->rlock();
     return zset_item->zcount(min, max);
 }
 
-size_t StorageEngine::zcard(const Key& key) {
-    auto readlock = inner_storage_->rlock();
-    
-    auto it = inner_storage_->find(key);
-    if (it == inner_storage_->end() || it->second->isExpired()) {
+size_t StorageEngine::zcard(TransactionID tx_id, const Key& key) {
+    DataItem* item = getDataItem(tx_id, key);
+    if (!item || item->isExpired()) {
         return 0;
     }
     
-    ZSetItem* zset_item = dynamic_cast<ZSetItem*>(it->second.get());
+    auto* zset_item = dynamic_cast<ZSetItem*>(item);
     if (!zset_item) {
         return 0;
     }
-    auto keylock = zset_item->rlock();
     return zset_item->zcard();
 }
 
 // 位图操作实现
-bool StorageEngine::setBit(const Key& key, size_t offset, bool value) {
-    auto readlock = inner_storage_->rlock();
-    auto writelock = inner_storage_->wlock_deferred();
-    auto it = inner_storage_->find(key);
-    BitmapItem* bitmap_item = nullptr;
-    if (it == inner_storage_->end() || it->second->isExpired()) {
-        // 创建新的位图项
-        readlock.unlock();
-        writelock.lock();
-        // 检查键是否已存在
-        if (it == inner_storage_->end() || it->second->isExpired()) {
-            auto new_item = createBitmapItem();
-            bitmap_item = dynamic_cast<BitmapItem*>(new_item.get());
-            it = inner_storage_->insert_or_assign(key, std::move(new_item)).first;
-            total_keys_++;
+bool StorageEngine::setBit(TransactionID tx_id, const Key& key, size_t offset, bool value) {
+    DataItem* item = getDataItem(tx_id, key);
+    if (!item || item->isExpired()) {
+        // 键不存在，创建新的位图项
+        auto new_bitmap_item = createBitmapItem();
+        auto* bitmap_item_ptr = dynamic_cast<BitmapItem*>(new_bitmap_item.get());
+        if (bitmap_item_ptr) {
+            bitmap_item_ptr->setBit(offset, value);
+            if (inner_storage_.set(tx_id, key, std::move(new_bitmap_item))) {
+                return true;
+            }
         }
+        return false;
     }
-    // 检查是否是位图类型
-    bitmap_item = dynamic_cast<BitmapItem*>(it->second.get());
+    
+    auto* bitmap_item = dynamic_cast<BitmapItem*>(item);
     if (!bitmap_item) {
         return false; // 键存在但不是位图类型
     }
-    // 更新访问时间和频率
-    bitmap_item->touch();
-    bitmap_item->incrementFrequency();
-    auto keylock = bitmap_item->lock();
+    
     return bitmap_item->setBit(offset, value);
 }
 
-bool StorageEngine::getBit(const Key& key, size_t offset) {
-    auto readlock = inner_storage_->rlock();
-    
-    auto it = inner_storage_->find(key);
-    if (it == inner_storage_->end() || it->second->isExpired()) {
+bool StorageEngine::getBit(TransactionID tx_id, const Key& key, size_t offset) {
+    DataItem* item = getDataItem(tx_id, key);
+    if (!item || item->isExpired()) {
         return false;
     }
     
-    auto* bitmap_item = dynamic_cast<BitmapItem*>(it->second.get());
+    auto* bitmap_item = dynamic_cast<BitmapItem*>(item);
     if (!bitmap_item) {
         return false;
     }
     
-    // 更新访问时间和频率
-    bitmap_item->touch();
-    bitmap_item->incrementFrequency();
-    auto keylock = bitmap_item->rlock();
     return bitmap_item->getBit(offset);
 }
 
-size_t StorageEngine::bitCount(const Key& key) {
-    auto readlock = inner_storage_->rlock();
-    
-    auto it = inner_storage_->find(key);
-    if (it == inner_storage_->end() || it->second->isExpired()) {
+size_t StorageEngine::bitCount(TransactionID tx_id, const Key& key) {
+    DataItem* item = getDataItem(tx_id, key);
+    if (!item || item->isExpired()) {
         return 0;
     }
     
-    auto* bitmap_item = dynamic_cast<BitmapItem*>(it->second.get());
+    auto* bitmap_item = dynamic_cast<BitmapItem*>(item);
     if (!bitmap_item) {
         return 0;
     }
     
-    // 更新访问时间和频率
-    bitmap_item->touch();
-    bitmap_item->incrementFrequency();
-    auto keylock = bitmap_item->rlock();
     return bitmap_item->bitCount();
 }
 
-size_t StorageEngine::bitCount(const Key& key, size_t start, size_t end) {
-    auto readlock = inner_storage_->rlock();
-    
-    auto it = inner_storage_->find(key);
-    if (it == inner_storage_->end() || it->second->isExpired()) {
+size_t StorageEngine::bitCount(TransactionID tx_id, const Key& key, size_t start, size_t end) {
+    DataItem* item = getDataItem(tx_id, key);
+    if (!item || item->isExpired()) {
         return 0;
     }
     
-    auto* bitmap_item = dynamic_cast<BitmapItem*>(it->second.get());
+    auto* bitmap_item = dynamic_cast<BitmapItem*>(item);
     if (!bitmap_item) {
         return 0;
     }
     
-    // 更新访问时间和频率
-    bitmap_item->touch();
-    bitmap_item->incrementFrequency();
-    auto keylock = bitmap_item->rlock();
     return bitmap_item->bitCount(start, end);
 }
 
-bool StorageEngine::bitOp(const std::string& operation, const Key& destkey, const std::vector<Key>& keys) {
-    auto writelock = inner_storage_->wlock(); // todo: opt here
-
+bool StorageEngine::bitOp(TransactionID tx_id, const std::string& operation, const Key& destkey, const std::vector<Key>& keys) {
     // 检查源键是否都存在且未过期且都是位图类型
     std::vector<BitmapItem*> bitmap_items;
     for (const auto& key : keys) {
-        auto it = inner_storage_->find(key);
-        if (it == inner_storage_->end() || it->second->isExpired()) {
+        DataItem* item = getDataItem(tx_id, key);
+        if (!item || item->isExpired()) {
             return false;
         }
         
-        auto* bitmap_item = dynamic_cast<BitmapItem*>(it->second.get());
+        auto* bitmap_item = dynamic_cast<BitmapItem*>(item);
         if (!bitmap_item) {
             return false;
         }
@@ -1247,40 +999,51 @@ bool StorageEngine::bitOp(const std::string& operation, const Key& destkey, cons
     }
     
     // 创建或更新目标键
-    (*inner_storage_)[destkey] = createBitmapItem();
-    BitmapItem* dest_bitmap = dynamic_cast<BitmapItem*>((*inner_storage_)[destkey].get());
+    auto new_bitmap_item = createBitmapItem();
+    BitmapItem* dest_bitmap = dynamic_cast<BitmapItem*>(new_bitmap_item.get());
     
+    bool result = false;
     if (operation == "AND") {
-        return dest_bitmap->bitOpAnd(bitmap_items);
+        result = dest_bitmap->bitOpAnd(bitmap_items);
     } else if (operation == "OR") {
-        return dest_bitmap->bitOpOr(bitmap_items);
+        result = dest_bitmap->bitOpOr(bitmap_items);
     } else if (operation == "XOR") {
-        return dest_bitmap->bitOpXor(bitmap_items);
+        result = dest_bitmap->bitOpXor(bitmap_items);
     } else if (operation == "NOT" && keys.size() == 1) {
-        return dest_bitmap->bitOpNot(bitmap_items[0]);
+        result = dest_bitmap->bitOpNot(bitmap_items[0]);
+    }
+    
+    if (result) {
+        return inner_storage_.set(tx_id, destkey, std::move(new_bitmap_item));
     }
     
     return false;
 }
 
 // HyperLogLog操作实现
-bool StorageEngine::pfadd(const Key& key, const std::vector<Value>& elements) {
-    auto writelock = inner_storage_->wlock(); // todo: opt here
-    
-    auto it = inner_storage_->find(key);
-    HyperLogLogItem* hll_item = nullptr;
-    
-    if (it == inner_storage_->end() || it->second->isExpired()) {
-        // 创建新的HyperLogLog项
-        (*inner_storage_)[key] = createHyperLogLogItem();
-        hll_item = dynamic_cast<HyperLogLogItem*>((*inner_storage_)[key].get());
-        total_keys_++;
-    } else {
-        // 检查是否是HyperLogLog类型
-        hll_item = dynamic_cast<HyperLogLogItem*>(it->second.get());
-        if (!hll_item) {
-            return false; // 键存在但不是HyperLogLog类型
+bool StorageEngine::pfadd(TransactionID tx_id, const Key& key, const std::vector<Value>& elements) {
+    DataItem* item = getDataItem(tx_id, key);
+    if (!item || item->isExpired()) {
+        // 键不存在，创建新的HyperLogLog项
+        auto new_hll_item = createHyperLogLogItem();
+        auto* hll_item_ptr = dynamic_cast<HyperLogLogItem*>(new_hll_item.get());
+        if (hll_item_ptr) {
+            bool modified = false;
+            for (const auto& element : elements) {
+                if (hll_item_ptr->add(element)) {
+                    modified = true;
+                }
+            }
+            if (inner_storage_.set(tx_id, key, std::move(new_hll_item))) {
+                return modified;
+            }
         }
+        return false;
+    }
+    
+    auto* hll_item = dynamic_cast<HyperLogLogItem*>(item);
+    if (!hll_item) {
+        return false; // 键存在但不是HyperLogLog类型
     }
     
     bool modified = false;
@@ -1293,41 +1056,31 @@ bool StorageEngine::pfadd(const Key& key, const std::vector<Value>& elements) {
     return modified;
 }
 
-uint64_t StorageEngine::pfcount(const Key& key) {
-    auto readlock = inner_storage_->rlock();
-    
-    auto it = inner_storage_->find(key);
-    if (it == inner_storage_->end()) {
-        return 0;
-    }
-    if (it->second->isExpired()) {
+uint64_t StorageEngine::pfcount(TransactionID tx_id, const Key& key) {
+    // 使用getDataItem方法获取数据项，它会处理MVCC
+    DataItem* item = getDataItem(tx_id, key);
+    if (!item || item->isExpired()) {
         return 0;
     }
     
-    auto* hll_item = dynamic_cast<HyperLogLogItem*>(it->second.get());
+    auto* hll_item = dynamic_cast<HyperLogLogItem*>(item);
     if (!hll_item) {
         return 0;
     }
     
-    // 更新访问时间和频率
-    hll_item->touch();
-    hll_item->incrementFrequency();
-    auto keylock = hll_item->rlock();
     return hll_item->count();
 }
 
-bool StorageEngine::pfmerge(const Key& destkey, const std::vector<Key>& sourcekeys) {
-    auto writelock = inner_storage_->wlock(); // todo: opt here
-    
+bool StorageEngine::pfmerge(TransactionID tx_id, const Key& destkey, const std::vector<Key>& sourcekeys) {
     // 检查源键是否都存在且未过期且都是HyperLogLog类型
     std::vector<HyperLogLogItem*> hll_items;
     for (const auto& key : sourcekeys) {
-        auto it = inner_storage_->find(key);
-        if (it == inner_storage_->end() || it->second->isExpired()) {
+        DataItem* item = getDataItem(tx_id, key);
+        if (!item || item->isExpired()) {
             continue; // 忽略不存在或过期的键
         }
         
-        auto* hll_item = dynamic_cast<HyperLogLogItem*>(it->second.get());
+        auto* hll_item = dynamic_cast<HyperLogLogItem*>(item);
         if (!hll_item) {
             return false; // 源键不是HyperLogLog类型
         }
@@ -1335,17 +1088,20 @@ bool StorageEngine::pfmerge(const Key& destkey, const std::vector<Key>& sourceke
         hll_items.push_back(hll_item);
     }
     
+    auto new_hll_item = createHyperLogLogItem();
+    HyperLogLogItem* dest_hll = dynamic_cast<HyperLogLogItem*>(new_hll_item.get());
+    
     if (hll_items.empty()) {
         // 如果没有有效的源键，创建一个空的HyperLogLog
-        (*inner_storage_)[destkey] = createHyperLogLogItem();
-        return true;
+        return inner_storage_.set(tx_id, destkey, std::move(new_hll_item));
     }
     
-    // 创建或更新目标键
-    (*inner_storage_)[destkey] = createHyperLogLogItem();
-    HyperLogLogItem* dest_hll = dynamic_cast<HyperLogLogItem*>((*inner_storage_)[destkey].get());
+    bool result = dest_hll->merge(hll_items);
+    if (result) {
+        return inner_storage_.set(tx_id, destkey, std::move(new_hll_item));
+    }
     
-    return dest_hll->merge(hll_items);
+    return false;
 }
 
 // 创建HyperLogLogItem的工厂方法
@@ -1359,11 +1115,11 @@ std::unique_ptr<DataItem> StorageEngine::createHyperLogLogItem(Timestamp expire_
 
 // 淘汰策略相关方法实现
 std::vector<Key> StorageEngine::getAllKeys() const {
-    auto readlock = inner_storage_->rlock();
+    auto readlock = inner_storage_.rlock();
     std::vector<Key> result;
-    result.reserve(inner_storage_->size());
+    result.reserve(inner_storage_.size());
     
-    for (const auto& pair : *inner_storage_) {
+    for (const auto& pair : inner_storage_) {
         result.push_back(pair.first);
     }
     
@@ -1371,10 +1127,10 @@ std::vector<Key> StorageEngine::getAllKeys() const {
 }
 
 bool StorageEngine::hasExpiration(const Key& key) const {
-    auto readlock = inner_storage_->rlock();
+    auto readlock = inner_storage_.rlock();
     
-    auto it = inner_storage_->find(key);
-    if (it == inner_storage_->end()) {
+    auto it = inner_storage_.find(key);
+    if (it == inner_storage_.end()) {
         return false;
     }
     // hasExpiration is atomic, so we can read it without a lock
@@ -1382,10 +1138,10 @@ bool StorageEngine::hasExpiration(const Key& key) const {
 }
 
 Timestamp StorageEngine::getLastAccessed(const Key& key) const {
-    auto readlock = inner_storage_->rlock();
+    auto readlock = inner_storage_.rlock();
     
-    auto it = inner_storage_->find(key);
-    if (it == inner_storage_->end()) {
+    auto it = inner_storage_.find(key);
+    if (it == inner_storage_.end()) {
         return Timestamp::min();
     }
     // getLastAccessed is atomic, so we can read it without a lock
@@ -1393,10 +1149,10 @@ Timestamp StorageEngine::getLastAccessed(const Key& key) const {
 }
 
 int StorageEngine::getAccessFrequency(const Key& key) const {
-    auto readlock = inner_storage_->rlock();
+    auto readlock = inner_storage_.rlock();
     
-    auto it = inner_storage_->find(key);
-    if (it == inner_storage_->end()) {
+    auto it = inner_storage_.find(key);
+    if (it == inner_storage_.end()) {
         return 0;
     }
     // getAccessFrequency is atomic, so we can read it without a lock
@@ -1404,10 +1160,10 @@ int StorageEngine::getAccessFrequency(const Key& key) const {
 }
 
 Timestamp StorageEngine::getExpiration(const Key& key) const {
-    auto readlock = inner_storage_->rlock();
+    auto readlock = inner_storage_.rlock();
     
-    auto it = inner_storage_->find(key);
-    if (it == inner_storage_->end() || !it->second->hasExpiration()) {
+    auto it = inner_storage_.find(key);
+    if (it == inner_storage_.end() || !it->second->hasExpiration()) {
         return Timestamp::max();
     }
     // getExpiration is atomic, so we can read it without a lock
@@ -1415,10 +1171,10 @@ Timestamp StorageEngine::getExpiration(const Key& key) const {
 }
 
 size_t StorageEngine::getKeySize(const Key& key) const {
-    auto readlock = inner_storage_->rlock();
+    auto readlock = inner_storage_.rlock();
     
-    auto it = inner_storage_->find(key);
-    if (it == inner_storage_->end()) {
+    auto it = inner_storage_.find(key);
+    if (it == inner_storage_.end()) {
         return 0;
     }
     

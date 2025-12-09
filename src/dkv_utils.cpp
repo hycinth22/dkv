@@ -3,6 +3,11 @@
 #include <algorithm>
 #include <cctype>
 #include <unordered_map>
+#include <execinfo.h>
+#include <cxxabi.h>
+#include <iostream>
+#include <cstdlib>
+#include <csignal>
 
 namespace dkv {
 
@@ -189,6 +194,69 @@ int64_t Utils::stringToInt(const std::string& str) {
 
 std::string Utils::intToString(int64_t value) {
     return std::to_string(value);
+}
+
+void printBacktrace() {
+    constexpr int MAX_FRAMES = 64;
+    void* addrlist[MAX_FRAMES + 1];
+
+    int addrlen = backtrace(addrlist, MAX_FRAMES);
+    if (addrlen == 0) {
+        std::cerr << "  <empty stack>\n";
+        return;
+    }
+
+    char** symbollist = backtrace_symbols(addrlist, addrlen);
+
+    for (int i = 0; i < addrlen; i++) {
+        char *mangled = nullptr, *offset_begin = nullptr, *offset_end = nullptr;
+
+        // Find parentheses and +offset
+        for (char *p = symbollist[i]; *p; ++p) {
+            if (*p == '(') mangled = p;
+            else if (*p == '+') offset_begin = p;
+            else if (*p == ')' && offset_begin) {
+                offset_end = p;
+                break;
+            }
+        }
+
+        if (mangled && offset_begin && offset_end) {
+            *mangled++ = '\0';
+            *offset_begin++ = '\0';
+            *offset_end = '\0';
+
+            int status;
+            char* demangled = abi::__cxa_demangle(mangled, nullptr, nullptr, &status);
+
+            std::cerr << "  [" << i << "] " << symbollist[i]
+                      << " : " << (status == 0 ? demangled : mangled)
+                      << " + " << offset_begin << '\n';
+
+            std::free(demangled);
+        } else {
+            std::cerr << "  [" << i << "] " << symbollist[i] << '\n';
+        }
+    }
+
+    std::free(symbollist);
+}
+
+void signal_handler(int signo)
+{
+    printf("<<<<<<<<<<<<<<<<<catch signal %d>>>>>>>>>>>>>>>>>>>>>>>>>\n", signo);
+    printf("Dump stack start...\n");
+    printBacktrace();
+    printf("Dump stack end...\n");
+
+    signal(signo, SIG_DFL); /* 恢复信号默认处理 */
+    raise(signo);           /* 重新发送信号 */
+}
+
+void setSignalHandler() {
+    signal(SIGSEGV, signal_handler);
+    signal(SIGINT, signal_handler);
+    signal(SIGABRT, signal_handler);
 }
 
 } // namespace dkv

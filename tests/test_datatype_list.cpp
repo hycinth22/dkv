@@ -72,44 +72,44 @@ bool testListCommands() {
     StorageEngine storage;
     
     // 测试LPUSH和LPOP
-    assert(storage.lpush("list1", "value1") == 1);
-    assert(storage.lpush("list1", "value2") == 2);
-    assert(storage.lpop("list1") == "value2");
+    assert(storage.lpush(NO_TX, "list1", "value1") == 1);
+    assert(storage.lpush(NO_TX, "list1", "value2") == 2);
+    assert(storage.lpop(NO_TX, "list1") == "value2");
     
     // 测试RPUSH和RPOP
-    assert(storage.rpush("list1", "value3") == 2);
-    assert(storage.rpop("list1") == "value3");
+    assert(storage.rpush(NO_TX, "list1", "value3") == 2);
+    assert(storage.rpop(NO_TX, "list1") == "value3");
     
     // 测试LLEN
-    assert(storage.llen("list1") == 1);
-    assert(storage.llen("non_existent_list") == 0);
+    assert(storage.llen(NO_TX, "list1") == 1);
+    assert(storage.llen(NO_TX, "non_existent_list") == 0);
     
     // 测试LRANGE
-    storage.lpush("list2", "item1");
-    storage.lpush("list2", "item2");
-    storage.lpush("list2", "item3");
+    storage.lpush(NO_TX, "list2", "item1");
+    storage.lpush(NO_TX, "list2", "item2");
+    storage.lpush(NO_TX, "list2", "item3");
     
-    auto items = storage.lrange("list2", 0, -1);
+    auto items = storage.lrange(NO_TX, "list2", 0, -1);
     assert(items.size() == 3);
     assert(items[0] == "item3");
     assert(items[1] == "item2");
     assert(items[2] == "item1");
     
     // 测试获取部分范围
-    auto partial_items = storage.lrange("list2", 0, 1);
+    auto partial_items = storage.lrange(NO_TX, "list2", 0, 1);
     assert(partial_items.size() == 2);
     
     // 测试不存在的列表
-    auto empty_items = storage.lrange("non_existent_list", 0, 10);
+    auto empty_items = storage.lrange(NO_TX, "non_existent_list", 0, 10);
     assert(empty_items.empty());
     
     // 测试删除整个列表键
-    assert(storage.del("list1"));
-    assert(!storage.exists("list1"));
+    assert(storage.del(NO_TX, "list1"));
+    assert(!storage.exists(NO_TX, "list1"));
     
     // 测试LPOP和RPOP空列表
-    assert(storage.lpop("non_existent_list").empty());
-    assert(storage.rpop("non_existent_list").empty());
+    assert(storage.lpop(NO_TX, "non_existent_list").empty());
+    assert(storage.rpop(NO_TX, "non_existent_list").empty());
     
     return true;
 }

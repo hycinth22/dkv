@@ -20,5 +20,12 @@ const std::vector<TransactionRecordVersion>& Transaction::get_versions() const {
     return versions_;
 }
 
+void Transaction::push_command(const Command& command) {
+    commands_.push_back(command);
+}
+
+const std::vector<Command>& Transaction::get_commands() const {
+    return commands_;
+}
 
 } // namespace dkv

@@ -28,4 +28,7 @@ public:
     static std::string intToString(int64_t value);
 };
 
+void printBacktrace();
+void setSignalHandler();
+
 } // namespace dkv

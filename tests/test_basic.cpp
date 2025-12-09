@@ -46,32 +46,32 @@ bool testUtils() {
 bool testStorageEngine() {
     StorageEngine storage;
     // 测试基本操作
-    assert(storage.set("key1", "value1"));
-    assert(storage.get("key1") == "value1");
-    assert(storage.exists("key1"));
+    assert(storage.set(NO_TX, "key1", "value1"));
+    assert(storage.get(NO_TX, "key1") == "value1");
+    assert(storage.exists(NO_TX, "key1"));
     assert(storage.size() == 1);
     // 测试更新
-    assert(storage.set("key1", "new_value"));
-    assert(storage.get("key1") == "new_value");
+    assert(storage.set(NO_TX, "key1", "new_value"));
+    assert(storage.get(NO_TX, "key1") == "new_value");
     // 测试删除
-    assert(storage.del("key1"));
-    assert(!storage.exists("key1"));
-    assert(storage.get("key1").empty());
+    assert(storage.del(NO_TX, "key1"));
+    assert(!storage.exists(NO_TX, "key1"));
+    assert(storage.get(NO_TX, "key1").empty());
     assert(storage.size() == 0);
     // 测试数值操作
-    assert(storage.incr("counter") == 1);
-    assert(storage.incr("counter") == 2);
-    assert(storage.decr("counter") == 1);
-    assert(storage.get("counter") == "1");
+    assert(storage.incr(NO_TX, "counter") == 1);
+    assert(storage.incr(NO_TX, "counter") == 2);
+    assert(storage.decr(NO_TX, "counter") == 1);
+    assert(storage.get(NO_TX, "counter") == "1");
     // 测试过期时间
-    assert(storage.set("temp", "data", 2)); // 2秒后过期
-    assert(storage.exists("temp"));
-    int64_t ttl_value = storage.ttl("temp");
+    assert(storage.set(NO_TX, "temp", "data", 2)); // 2秒后过期
+    assert(storage.exists(NO_TX, "temp"));
+    int64_t ttl_value = storage.ttl(NO_TX, "temp");
     cout << "TTL值: " << ttl_value << endl;
     // 测试expire命令
-    assert(storage.set("temp2", "data2"));
-    assert(storage.expire("temp2", 2));
-    int64_t ttl_value2 = storage.ttl("temp2");
+    assert(storage.set(NO_TX, "temp2", "data2"));
+    assert(storage.expire(NO_TX, "temp2", 2));
+    int64_t ttl_value2 = storage.ttl(NO_TX, "temp2");
     cout << "TTL值2: " << ttl_value2 << endl;
     // 测试TTL值在合理范围内
     // 考虑到系统时间精度和测试执行时机，允许TTL值为-1
@@ -81,8 +81,8 @@ bool testStorageEngine() {
     this_thread::sleep_for(chrono::milliseconds(2100));
     // 手动清理过期键
     storage.cleanupExpiredKeys();
-    assert(!storage.exists("temp"));
-    assert(storage.ttl("temp") == -2); // 键不存在
+    assert(!storage.exists(NO_TX, "temp"));
+    assert(storage.ttl(NO_TX, "temp") == -2); // 键不存在
     
     return true;
 }
@@ -124,12 +124,12 @@ bool testCommandExecution() {
     // 这里需要模拟命令执行，实际测试中会通过NetworkServer执行
     
     // 测试GET命令
-    storage.set("test_key", "test_value");
-    assert(storage.get("test_key") == "test_value");
+    storage.set(NO_TX, "test_key", "test_value");
+    assert(storage.get(NO_TX, "test_key") == "test_value");
     
     // 测试DEL命令
-    assert(storage.del("test_key"));
-    assert(!storage.exists("test_key"));
+    assert(storage.del(NO_TX, "test_key"));
+    assert(!storage.exists(NO_TX, "test_key"));
     
     return true;
 }

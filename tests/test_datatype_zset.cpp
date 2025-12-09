@@ -1,4 +1,5 @@
 #include "test_runner.hpp"
+#include "dkv_core.hpp"
 #include "dkv_storage.hpp"
 #include "dkv_utils.hpp"
 #include "dkv_logger.hpp"
@@ -21,40 +22,40 @@ void testZAddZRem() {
     std::vector<std::pair<Value, double>> members2 = { {"member2", 2.0} };
     std::vector<std::pair<Value, double>> members3 = { {"member3", 3.0} };
     
-    engine.zadd("zset1", members1);
-    engine.zadd("zset1", members2);
-    engine.zadd("zset1", members3);
+    engine.zadd(NO_TX, "zset1", members1);
+    engine.zadd(NO_TX, "zset1", members2);
+    engine.zadd(NO_TX, "zset1", members3);
     
     // 验证添加成功
-    size_t count = engine.zcard("zset1");
+    size_t count = engine.zcard(NO_TX, "zset1");
     assert(count == 3);
     
-    bool isMember = engine.zismember("zset1", "member1");
+    bool isMember = engine.zismember(NO_TX, "zset1", "member1");
     assert(isMember);
     
     // 更新已存在元素的分数
     std::vector<std::pair<Value, double>> updateMember = { {"member1", 1.5} };
-    size_t updated = engine.zadd("zset1", updateMember);
+    size_t updated = engine.zadd(NO_TX, "zset1", updateMember);
     assert(updated == 1); // 返回1表示成功更新一个元素
     
     double score = 0;
-    assert(engine.zscore("zset1", "member1", score));
+    assert(engine.zscore(NO_TX, "zset1", "member1", score));
     assert(score == 1.5);
     
     // 删除元素
     std::vector<Value> removeMembers = {"member2"};
-    size_t removed = engine.zrem("zset1", removeMembers);
+    size_t removed = engine.zrem(NO_TX, "zset1", removeMembers);
     assert(removed == 1);
     
-    isMember = engine.zismember("zset1", "member2");
+    isMember = engine.zismember(NO_TX, "zset1", "member2");
     assert(!isMember);
     
     // 批量删除元素
     removeMembers = {"member1", "member3"};
-    removed = engine.zrem("zset1", removeMembers);
+    removed = engine.zrem(NO_TX, "zset1", removeMembers);
     assert(removed == 2);
     
-    count = engine.zcard("zset1");
+    count = engine.zcard(NO_TX, "zset1");
     assert(count == 0);
     
     DKV_LOG_INFO("testZAddZRem passed");
@@ -69,25 +70,25 @@ void testZScoreZIsMember() {
     std::vector<std::pair<Value, double>> members1 = { {"member1", 10.5} };
     std::vector<std::pair<Value, double>> members2 = { {"member2", -5.25} };
     
-    engine.zadd("zset2", members1);
-    engine.zadd("zset2", members2);
+    engine.zadd(NO_TX, "zset2", members1);
+    engine.zadd(NO_TX, "zset2", members2);
     
     // 检查元素是否存在
-    bool isMember = engine.zismember("zset2", "member1");
+    bool isMember = engine.zismember(NO_TX, "zset2", "member1");
     assert(isMember);
     
-    isMember = engine.zismember("zset2", "nonexistent");
+    isMember = engine.zismember(NO_TX, "zset2", "nonexistent");
     assert(!isMember);
     
     // 获取元素分数
     double score = 0;
-    assert(engine.zscore("zset2", "member1", score));
+    assert(engine.zscore(NO_TX, "zset2", "member1", score));
     assert(score == 10.5);
     
-    assert(engine.zscore("zset2", "member2", score));
+    assert(engine.zscore(NO_TX, "zset2", "member2", score));
     assert(score == -5.25);
     
-    assert(!engine.zscore("zset2", "nonexistent", score));
+    assert(!engine.zscore(NO_TX, "zset2", "nonexistent", score));
     
     DKV_LOG_INFO("testZScoreZIsMember passed");
 }
@@ -103,38 +104,38 @@ void testZRankZRevRank() {
     std::vector<std::pair<Value, double>> membersC = { {"C", 15} };
     std::vector<std::pair<Value, double>> membersD = { {"D", 0} };
     
-    engine.zadd("zset3", membersA);
-    engine.zadd("zset3", membersB);
-    engine.zadd("zset3", membersC);
-    engine.zadd("zset3", membersD);
+    engine.zadd(NO_TX, "zset3", membersA);
+    engine.zadd(NO_TX, "zset3", membersB);
+    engine.zadd(NO_TX, "zset3", membersC);
+    engine.zadd(NO_TX, "zset3", membersD);
     
     // 检查排名（升序）
     size_t rank = 0;
-    assert(engine.zrank("zset3", "D", rank));
+    assert(engine.zrank(NO_TX, "zset3", "D", rank));
     assert(rank == 0);  // 最小的分数
     
-    assert(engine.zrank("zset3", "B", rank));
+    assert(engine.zrank(NO_TX, "zset3", "B", rank));
     assert(rank == 1);
     
-    assert(engine.zrank("zset3", "A", rank));
+    assert(engine.zrank(NO_TX, "zset3", "A", rank));
     assert(rank == 2);
     
-    assert(engine.zrank("zset3", "C", rank));
+    assert(engine.zrank(NO_TX, "zset3", "C", rank));
     assert(rank == 3);  // 最大的分数
     
-    assert(!engine.zrank("zset3", "nonexistent", rank));
+    assert(!engine.zrank(NO_TX, "zset3", "nonexistent", rank));
     
     // 检查逆序排名（降序）
-    assert(engine.zrevrank("zset3", "C", rank));
+    assert(engine.zrevrank(NO_TX, "zset3", "C", rank));
     assert(rank == 0);  // 最大的分数
     
-    assert(engine.zrevrank("zset3", "A", rank));
+    assert(engine.zrevrank(NO_TX, "zset3", "A", rank));
     assert(rank == 1);
     
-    assert(engine.zrevrank("zset3", "B", rank));
+    assert(engine.zrevrank(NO_TX, "zset3", "B", rank));
     assert(rank == 2);
     
-    assert(engine.zrevrank("zset3", "D", rank));
+    assert(engine.zrevrank(NO_TX, "zset3", "D", rank));
     assert(rank == 3);  // 最小的分数
     
     DKV_LOG_INFO("testZRankZRevRank passed");
@@ -148,11 +149,11 @@ void testZRangeZRevRange() {
     
     for (int i = 0; i < 10; ++i) {
         std::vector<std::pair<Value, double>> members = { {"member" + std::to_string(i), i} };
-        engine.zadd("zset4", members);
+        engine.zadd(NO_TX, "zset4", members);
     }
     
     // 测试ZRANGE
-    auto range1 = engine.zrange("zset4", 2, 5);
+    auto range1 = engine.zrange(NO_TX, "zset4", 2, 5);
     assert(range1.size() == 4);
     assert(range1[0].first == "member2");
     assert(range1[1].first == "member3");
@@ -160,7 +161,7 @@ void testZRangeZRevRange() {
     assert(range1[3].first == "member5");
     
     // 测试ZREVRANGE
-    auto revRange1 = engine.zrevrange("zset4", 2, 5);
+    auto revRange1 = engine.zrevrange(NO_TX, "zset4", 2, 5);
     assert(revRange1.size() == 4);
     assert(revRange1[0].first == "member7");  // 从高到低排序后的第3个元素
     assert(revRange1[1].first == "member6");
@@ -182,21 +183,21 @@ void testZRangeByScoreZRevRangeByScore() {
     std::vector<std::pair<Value, double>> membersD = { {"D", 40} };
     std::vector<std::pair<Value, double>> membersE = { {"E", 50} };
     
-    engine.zadd("zset5", membersA);
-    engine.zadd("zset5", membersB);
-    engine.zadd("zset5", membersC);
-    engine.zadd("zset5", membersD);
-    engine.zadd("zset5", membersE);
+    engine.zadd(NO_TX, "zset5", membersA);
+    engine.zadd(NO_TX, "zset5", membersB);
+    engine.zadd(NO_TX, "zset5", membersC);
+    engine.zadd(NO_TX, "zset5", membersD);
+    engine.zadd(NO_TX, "zset5", membersE);
     
     // 测试ZRANGEBYSCORE
-    auto range1 = engine.zrangebyscore("zset5", 15, 45);
+    auto range1 = engine.zrangebyscore(NO_TX, "zset5", 15, 45);
     assert(range1.size() == 3);
     assert(range1[0].first == "B");
     assert(range1[1].first == "C");
     assert(range1[2].first == "D");
     
     // 测试ZREVRANGEBYSCORE
-    auto revRange1 = engine.zrevrangebyscore("zset5", 45, 15);
+    auto revRange1 = engine.zrevrangebyscore(NO_TX, "zset5", 45, 15);
     assert(revRange1.size() == 3);
     assert(revRange1[0].first == "D");
     assert(revRange1[1].first == "C");
@@ -213,24 +214,24 @@ void testZCountZCard() {
     
     for (int i = 0; i < 10; ++i) {
         std::vector<std::pair<Value, double>> members = { {"member" + std::to_string(i), i} };
-        engine.zadd("zset6", members);
+        engine.zadd(NO_TX, "zset6", members);
     }
     
     // 测试ZCARD
-    size_t count = engine.zcard("zset6");
+    size_t count = engine.zcard(NO_TX, "zset6");
     assert(count == 10);
     
     // 测试ZCOUNT
-    count = engine.zcount("zset6", 2, 7);
+    count = engine.zcount(NO_TX, "zset6", 2, 7);
     assert(count == 6);  // 2,3,4,5,6,7
     
-    count = engine.zcount("zset6", 5, 15);
+    count = engine.zcount(NO_TX, "zset6", 5, 15);
     assert(count == 5);  // 5,6,7,8,9
     
-    count = engine.zcount("zset6", -5, -1);
+    count = engine.zcount(NO_TX, "zset6", -5, -1);
     assert(count == 0);  // 没有负数分数
     
-    count = engine.zcount("nonexistent", 0, 10);
+    count = engine.zcount(NO_TX, "nonexistent", 0, 10);
     assert(count == 0);
     
     DKV_LOG_INFO("testZCountZCard passed");
@@ -245,24 +246,24 @@ void testExpiration() {
     std::vector<std::pair<Value, double>> members1 = { {"member1", 10} };
     std::vector<std::pair<Value, double>> members2 = { {"member2", 20} };
     
-    engine.zadd("zset7", members1);
-    engine.zadd("zset7", members2);
+    engine.zadd(NO_TX, "zset7", members1);
+    engine.zadd(NO_TX, "zset7", members2);
     
     // 设置过期时间1秒
-    assert(engine.expire("zset7", 1));
+    assert(engine.expire(NO_TX, "zset7", 1));
     
     // 验证元素存在
-    assert(engine.exists("zset7"));
+    assert(engine.exists(NO_TX, "zset7"));
     
-    size_t count = engine.zcard("zset7");
+    size_t count = engine.zcard(NO_TX, "zset7");
     assert(count == 2);
     
     // 等待过期
     std::this_thread::sleep_for(std::chrono::seconds(2));
     
     // 验证元素已过期
-    assert(!engine.exists("zset7"));
-    count = engine.zcard("zset7");
+    assert(!engine.exists(NO_TX, "zset7"));
+    count = engine.zcard(NO_TX, "zset7");
     assert(count == 0);
     
     DKV_LOG_INFO("testExpiration passed");
@@ -284,11 +285,11 @@ void testZAddMultipleMembers() {
     };
     
     // 一次添加多个成员
-    size_t addedCount = engine.zadd("zset_multiple", members_with_scores);
+    size_t addedCount = engine.zadd(NO_TX, "zset_multiple", members_with_scores);
     assert(addedCount == 5); // 应该成功添加5个元素
     
     // 验证所有成员都已添加
-    size_t count = engine.zcard("zset_multiple");
+    size_t count = engine.zcard(NO_TX, "zset_multiple");
     assert(count == 5);
     
     // 验证每个成员都存在且分数正确
@@ -296,10 +297,10 @@ void testZAddMultipleMembers() {
         const Value& member = pair.first;
         double expectedScore = pair.second;
         
-        assert(engine.zismember("zset_multiple", member));
+        assert(engine.zismember(NO_TX, "zset_multiple", member));
         
         double actualScore = 0;
-        assert(engine.zscore("zset_multiple", member, actualScore));
+        assert(engine.zscore(NO_TX, "zset_multiple", member, actualScore));
         assert(actualScore == expectedScore);
     }
     
@@ -309,15 +310,15 @@ void testZAddMultipleMembers() {
         {"member6", 6.0}   // 添加新成员
     };
     
-    addedCount = engine.zadd("zset_multiple", mixed_members);
+    addedCount = engine.zadd(NO_TX, "zset_multiple", mixed_members);
     assert(addedCount == 2); // 应该返回2，表示更新和添加了2个元素
     
     // 验证更新和添加是否成功
     double updatedScore = 0;
-    assert(engine.zscore("zset_multiple", "member1", updatedScore));
+    assert(engine.zscore(NO_TX, "zset_multiple", "member1", updatedScore));
     assert(updatedScore == 10.0);
     
-    assert(engine.zismember("zset_multiple", "member6"));
+    assert(engine.zismember(NO_TX, "zset_multiple", "member6"));
     
     DKV_LOG_INFO("testZAddMultipleMembers passed");
 }

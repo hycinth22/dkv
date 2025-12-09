@@ -81,18 +81,19 @@ void WorkerThreadPool::workerThread() {
             task_queue_.pop();
         }
         
-        try {
+        Response response;
+        //try {
             // 执行命令
-            Response response;
             if (task.command.type != CommandType::UNKNOWN) {
                 response = executeCommand(task.client_fd, task.command);
-                // 调用SubReactor处理结果
-                if (task.sub_reactor) {
-                    task.sub_reactor->handleCommandResult(task.client_fd, response);
-                }
             }
-        } catch (const std::exception& e) {
-            DKV_LOG_ERROR("工作线程执行任务时出错: ", e.what());
+        // } catch (const std::exception& e) {
+        //     DKV_LOG_ERROR("工作线程执行任务时出错: ", e.what());
+        // }
+
+        // 调用SubReactor处理结果
+        if (task.sub_reactor) {
+            task.sub_reactor->handleCommandResult(task.client_fd, response);
         }
     }
 }

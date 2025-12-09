@@ -74,47 +74,47 @@ bool testHashCommands() {
     StorageEngine storage;
     
     // 测试HSET和HGET
-    assert(storage.hset("user1", "name", "John"));
-    assert(storage.hset("user1", "age", "30"));
-    assert(storage.hget("user1", "name") == "John");
-    assert(storage.hget("user1", "age") == "30");
+    assert(storage.hset(NO_TX, "user1", "name", "John"));
+    assert(storage.hset(NO_TX, "user1", "age", "30"));
+    assert(storage.hget(NO_TX, "user1", "name") == "John");
+    assert(storage.hget(NO_TX, "user1", "age") == "30");
     
     // 测试字段不存在的情况
-    assert(storage.hget("user1", "email").empty());
-    assert(storage.hget("user2", "name").empty());
+    assert(storage.hget(NO_TX, "user1", "email").empty());
+    assert(storage.hget(NO_TX, "user2", "name").empty());
     
     // 测试HGETALL
-    auto all_fields = storage.hgetall("user1");
+    auto all_fields = storage.hgetall(NO_TX, "user1");
     assert(all_fields.size() == 2);
     
     // 测试HDEL
-    assert(storage.hdel("user1", "age"));
-    assert(storage.hget("user1", "age").empty());
+    assert(storage.hdel(NO_TX, "user1", "age"));
+    assert(storage.hget(NO_TX, "user1", "age").empty());
     
     // 测试HEXISTS
-    assert(storage.hexists("user1", "name"));
-    assert(!storage.hexists("user1", "age"));
+    assert(storage.hexists(NO_TX, "user1", "name"));
+    assert(!storage.hexists(NO_TX, "user1", "age"));
     
     // 测试HKEYS和HVALS
-    auto keys = storage.hkeys("user1");
+    auto keys = storage.hkeys(NO_TX, "user1");
     assert(keys.size() == 1);
     assert(keys[0] == "name");
     
-    auto values = storage.hvals("user1");
+    auto values = storage.hvals(NO_TX, "user1");
     assert(values.size() == 1);
     assert(values[0] == "John");
     
     // 测试HLEN
-    assert(storage.hlen("user1") == 1);
-    assert(storage.hlen("user2") == 0);
+    assert(storage.hlen(NO_TX, "user1") == 1);
+    assert(storage.hlen(NO_TX, "user2") == 0);
     
     // 测试更新字段
-    assert(storage.hset("user1", "name", "Mike"));
-    assert(storage.hget("user1", "name") == "Mike");
+    assert(storage.hset(NO_TX, "user1", "name", "Mike"));
+    assert(storage.hget(NO_TX, "user1", "name") == "Mike");
     
     // 测试删除整个哈希键
-    assert(storage.del("user1"));
-    assert(!storage.exists("user1"));
+    assert(storage.del(NO_TX, "user1"));
+    assert(!storage.exists(NO_TX, "user1"));
     
     return true;
 }

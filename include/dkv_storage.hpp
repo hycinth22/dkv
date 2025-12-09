@@ -5,9 +5,7 @@
 #include "dkv_memory_allocator.hpp"
 #include "dkv_rdb.hpp"
 #include "dkv_transaction_manager.hpp"
-#include "storage/dkv_inner_storage.h"
-#include "storage/dkv_simple_storage.h"
-#include "storage/dkv_mvcc_storage.h"
+#include "dkv_inner_storage.h"
 #include <unordered_map>
 #include <shared_mutex>
 #include <memory>
@@ -17,8 +15,8 @@ namespace dkv {
 // 存储引擎
 class StorageEngine {
 private:
-    // 内部存储（使用接口以支持不同实现）
-    std::unique_ptr<IInnerStorage> inner_storage_;
+    // 内部存储
+    InnerStorage inner_storage_;
     
     // 统计信息
     std::atomic<uint64_t> total_keys_{0};
@@ -55,17 +53,17 @@ public:
     }
 
     // 基本操作
-    bool set(const Key& key, const Value& value);
-    bool set(const Key& key, const Value& value, int64_t expire_seconds);
-    std::string get(const Key& key);
-    bool del(const Key& key);
-    bool exists(const Key& key);
-    bool expire(const Key& key, int64_t seconds);
-    int64_t ttl(const Key& key);
+    bool set(TransactionID tx_id, const Key& key, const Value& value);
+    bool set(TransactionID tx_id, const Key& key, const Value& value, int64_t expire_seconds);
+    std::string get(TransactionID tx_id, const Key& key);
+    bool del(TransactionID tx_id, const Key& key);
+    bool exists(TransactionID tx_id, const Key& key);
+    bool expire(TransactionID tx_id, const Key& key, int64_t seconds);
+    int64_t ttl(TransactionID tx_id, const Key& key);
     
     // 数值操作
-    int64_t incr(const Key& key);
-    int64_t decr(const Key& key);
+    int64_t incr(TransactionID tx_id, const Key& key);
+    int64_t decr(TransactionID tx_id, const Key& key);
     
     // 数据库管理
     void flush();
@@ -85,58 +83,58 @@ public:
     bool loadRDB(const std::string& filename);
     
     // 哈希操作
-    bool hset(const Key& key, const Value& field, const Value& value);
-    std::string hget(const Key& key, const Value& field);
-    std::vector<std::pair<Value, Value>> hgetall(const Key& key);
-    bool hdel(const Key& key, const Value& field);
-    bool hexists(const Key& key, const Value& field);
-    std::vector<Value> hkeys(const Key& key);
-    std::vector<Value> hvals(const Key& key);
-    size_t hlen(const Key& key);
+    bool hset(TransactionID tx_id, const Key& key, const Value& field, const Value& value);
+    std::string hget(TransactionID tx_id, const Key& key, const Value& field);
+    std::vector<std::pair<Value, Value>> hgetall(TransactionID tx_id, const Key& key);
+    bool hdel(TransactionID tx_id, const Key& key, const Value& field);
+    bool hexists(TransactionID tx_id, const Key& key, const Value& field);
+    std::vector<Value> hkeys(TransactionID tx_id, const Key& key);
+    std::vector<Value> hvals(TransactionID tx_id, const Key& key);
+    size_t hlen(TransactionID tx_id, const Key& key);
     
     // 列表操作
-    size_t lpush(const Key& key, const Value& value);
-    size_t rpush(const Key& key, const Value& value);
-    std::string lpop(const Key& key);
-    std::string rpop(const Key& key);
-    size_t llen(const Key& key);
-    std::vector<Value> lrange(const Key& key, size_t start, size_t stop);
+    size_t lpush(TransactionID tx_id, const Key& key, const Value& value);
+    size_t rpush(TransactionID tx_id, const Key& key, const Value& value);
+    std::string lpop(TransactionID tx_id, const Key& key);
+    std::string rpop(TransactionID tx_id, const Key& key);
+    size_t llen(TransactionID tx_id, const Key& key);
+    std::vector<Value> lrange(TransactionID tx_id, const Key& key, size_t start, size_t stop);
     
     // 集合操作
-    size_t sadd(const Key& key, const std::vector<Value>& members);
-    size_t srem(const Key& key, const std::vector<Value>& members);
-    std::vector<Value> smembers(const Key& key);
-    bool sismember(const Key& key, const Value& member);
-    size_t scard(const Key& key);
+    size_t sadd(TransactionID tx_id, const Key& key, const std::vector<Value>& members);
+    size_t srem(TransactionID tx_id, const Key& key, const std::vector<Value>& members);
+    std::vector<Value> smembers(TransactionID tx_id, const Key& key);
+    bool sismember(TransactionID tx_id, const Key& key, const Value& member);
+    size_t scard(TransactionID tx_id, const Key& key);
     
     // 有序集合操作
-    size_t zadd(const Key& key, const std::vector<std::pair<Value, double>>& members_with_scores);
-    size_t zrem(const Key& key, const std::vector<Value>& members);
-    bool zscore(const Key& key, const Value& member, double& score);
-    bool zismember(const Key& key, const Value& member);
-    bool zrank(const Key& key, const Value& member, size_t& rank);
-    bool zrevrank(const Key& key, const Value& member, size_t& rank);
-    std::vector<std::pair<Value, double>> zrange(const Key& key, size_t start, size_t stop);
-    std::vector<std::pair<Value, double>> zrevrange(const Key& key, size_t start, size_t stop);
-    std::vector<std::pair<Value, double>> zrangebyscore(const Key& key, double min, double max);
-    std::vector<std::pair<Value, double>> zrevrangebyscore(const Key& key, double max, double min);
-    size_t zcount(const Key& key, double min, double max);
-    size_t zcard(const Key& key);
+    size_t zadd(TransactionID tx_id, const Key& key, const std::vector<std::pair<Value, double>>& members_with_scores);
+    size_t zrem(TransactionID tx_id, const Key& key, const std::vector<Value>& members);
+    bool zscore(TransactionID tx_id, const Key& key, const Value& member, double& score);
+    bool zismember(TransactionID tx_id, const Key& key, const Value& member);
+    bool zrank(TransactionID tx_id, const Key& key, const Value& member, size_t& rank);
+    bool zrevrank(TransactionID tx_id, const Key& key, const Value& member, size_t& rank);
+    std::vector<std::pair<Value, double>> zrange(TransactionID tx_id, const Key& key, size_t start, size_t stop);
+    std::vector<std::pair<Value, double>> zrevrange(TransactionID tx_id, const Key& key, size_t start, size_t stop);
+    std::vector<std::pair<Value, double>> zrangebyscore(TransactionID tx_id, const Key& key, double min, double max);
+    std::vector<std::pair<Value, double>> zrevrangebyscore(TransactionID tx_id, const Key& key, double max, double min);
+    size_t zcount(TransactionID tx_id, const Key& key, double min, double max);
+    size_t zcard(TransactionID tx_id, const Key& key);
     
     // 位图操作
-    bool setBit(const Key& key, size_t offset, bool value);
-    bool getBit(const Key& key, size_t offset);
-    size_t bitCount(const Key& key);
-    size_t bitCount(const Key& key, size_t start, size_t end);
-    bool bitOp(const std::string& operation, const Key& destkey, const std::vector<Key>& keys);
+    bool setBit(TransactionID tx_id, const Key& key, size_t offset, bool value);
+    bool getBit(TransactionID tx_id, const Key& key, size_t offset);
+    size_t bitCount(TransactionID tx_id, const Key& key);
+    size_t bitCount(TransactionID tx_id, const Key& key, size_t start, size_t end);
+    bool bitOp(TransactionID tx_id, const std::string& operation, const Key& destkey, const std::vector<Key>& keys);
     
     // HyperLogLog操作
-    bool pfadd(const Key& key, const std::vector<Value>& elements);
-    uint64_t pfcount(const Key& key);
-    bool pfmerge(const Key& destkey, const std::vector<Key>& sourcekeys);
+    bool pfadd(TransactionID tx_id, const Key& key, const std::vector<Value>& elements);
+    uint64_t pfcount(TransactionID tx_id, const Key& key);
+    bool pfmerge(TransactionID tx_id, const Key& destkey, const std::vector<Key>& sourcekeys);
     
     // 获取数据项
-    DataItem* getDataItem(const Key& key);
+    DataItem* getDataItem(TransactionID tx_id, const Key& key);
     
     // 设置数据项（AOF重写恢复专用）
     void setDataItem(const Key& key, std::unique_ptr<DataItem> item);

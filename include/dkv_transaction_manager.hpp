@@ -29,6 +29,9 @@ public:
     bool commit(TransactionID transaction_id);
     bool rollback(TransactionID transaction_id);
     
+    const Transaction& getTransaction(TransactionID transaction_id) const;
+    Transaction& getTransactionMut(TransactionID transaction_id);
+
     // 查询事务是否活跃
     bool isActive(TransactionID transaction_id) const;
     std::vector<TransactionID> getActiveTransactions() const;
@@ -50,6 +53,12 @@ private:
 
     TransactionID nextTransactionId() {
         return transaction_id_generator_.fetch_add(1);
+    }
+
+    template<typename Self>
+    static auto& getTransactionImpl(Self& self, TransactionID transaction_id) {
+        std::lock_guard<std::mutex> lock(self.active_transactions_mutex_);
+        return self.active_transactions_.at(transaction_id);
     }
 };
 

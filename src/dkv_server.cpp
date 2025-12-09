@@ -247,7 +247,17 @@ TransactionIsolationLevel DKVServer::getTransactionIsolationLevel() const {
     return transaction_isolation_level_;
 }
 
-void DKVServer::evictKeys() {
+void recordCommandForAOF(TransactionID tx_id, const Command& command, unique_ptr<dkv::CommandHandler>& command_handler, unique_ptr<dkv::TransactionManager>& transaction_manager) {
+    if (!isReadOnlyCommand(command.type)) {
+        if (tx_id == NO_TX) {
+            command_handler->appendAOFCommand(command);
+        } else {
+            transaction_manager->getTransactionMut(tx_id).push_command(command);
+        }
+    }
+}
+
+void DKVServer::evictKeys(TransactionID tx_id) {
     if (!storage_engine_) {
         DKV_LOG_ERROR("存储引擎未初始化，无法执行淘汰策略");
         return;
@@ -347,16 +357,16 @@ void DKVServer::evictKeys() {
         }
         
         // 删除键
-        size_t key_size = storage_engine_->getKeySize(key);
-        if (storage_engine_->del(key)) {
+        size_t key_size = storage_engine_->getKeySize(key); // todo: here should begin a tx?
+        if (storage_engine_->del(tx_id, key)) {
             DKV_LOG_INFO("淘汰键: ", key.c_str(), " 大小: ", key_size);
             current_usage -= key_size;
             evicted_count++;
-            
+
             // 如果启用了AOF持久化，记录DEL命令
             if (enable_aof_ && aof_persistence_) {
                 Command del_cmd(CommandType::DEL, {string(key)});
-                aof_persistence_->appendCommand(del_cmd);
+                recordCommandForAOF(tx_id, del_cmd, command_handler_, transaction_manager_);
             }
         }
     }
@@ -440,7 +450,9 @@ bool DKVServer::initialize() {
     command_handler_ = make_unique<CommandHandler>(
         storage_engine_.get(), 
         nullptr, // AOF持久化稍后初始化
-        enable_aof_);
+        enable_aof_,
+        transaction_manager_.get()
+    );
     
     DKV_LOG_INFO("DKV服务器初始化完成");
     return true;
@@ -454,59 +466,65 @@ Response DKVServer::executeCommand(int client_fd, const Command& command) {
         if (it == client_transaction_ids_.end()) {
             // 客户端未开启事务，直接执行命令
             readlock_client_transaction_ids_.unlock();
-            return executeCommand(command);
+            return executeCommand(command, NO_TX);
         }
         tx_id = it->second;
     }
-    // 检查是否是事务命令
-    if (command.type == CommandType::MULTI) {
+    auto begin = [this, client_fd]() {
         // 开启事务
         TransactionID tx_id = transaction_manager_->begin();
         lock_guard writelock_client_transaction_ids_(transaction_mutex_);
         client_transaction_ids_[client_fd] = tx_id;
-        return Response(ResponseStatus::OK, "OK");
-    } else if (command.type == CommandType::EXEC) {
+    };
+    auto commit = [this, client_fd](TransactionID tx_id) {
         // 提交事务
         transaction_manager_->commit(tx_id);
         lock_guard writelock_client_transaction_ids_(transaction_mutex_);
         client_transaction_ids_.erase(client_fd);
-        return Response(ResponseStatus::OK, "OK");
-    } else if (command.type == CommandType::DISCARD) {
-        // 丢弃事务
+    };
+    auto rollback = [this, client_fd](TransactionID tx_id) {
+        // 回滚事务
         transaction_manager_->rollback(tx_id);
         lock_guard writelock_client_transaction_ids_(transaction_mutex_);
         client_transaction_ids_.erase(client_fd);
+    };
+    // 检查是否是事务命令
+    if (command.type == CommandType::MULTI) {
+        if (tx_id != NO_TX) {
+            return Response(ResponseStatus::ERROR, "Transaction already started");
+        }
+        begin();
+        return Response(ResponseStatus::OK, "OK");
+    } else if (command.type == CommandType::EXEC) {
+        if (tx_id == NO_TX) {
+            return Response(ResponseStatus::ERROR, "Transaction not started");
+        }
+        auto commands = transaction_manager_->getTransaction(tx_id).get_commands();
+        command_handler_->appendAOFCommands(commands);
+        commit(tx_id);
+        return Response(ResponseStatus::OK, "OK");
+    } else if (command.type == CommandType::DISCARD) {
+        if (tx_id == NO_TX) {
+            return Response(ResponseStatus::ERROR, "Transaction not started");
+        }
+        rollback(tx_id);
         return Response(ResponseStatus::OK, "OK");
     }
-    switch (command.type) {
-        case CommandType::FLUSHDB:
-        case CommandType::SHUTDOWN:
-        case CommandType::SAVE:
-        case CommandType::BGSAVE:
-            // 不允许在事务中执行的命令，先自动提交当前事务
-            transaction_manager_->commit(tx_id);
-            return executeCommand(command);
-        default:
-           ; // 正常在事务中执行
+    if (commandNotAllowedInTx(command.type) && tx_id != NO_TX) {
+        // 不允许在事务中执行的命令，先自动提交当前事务
+        commit(tx_id);
+        tx_id = NO_TX;
     }
-    switch (transaction_isolation_level_) {
-        case TransactionIsolationLevel::READ_UNCOMMITTED:
-        case TransactionIsolationLevel::READ_COMMITTED:
-        case TransactionIsolationLevel::REPEATABLE_READ:
-        case TransactionIsolationLevel::SERIALIZABLE:
-            break;
-    }
-    // return command_handler_->handleCommand(command, tx_id);
-    return Response(ResponseStatus::ERROR, "TX not implemented");
+    return executeCommand(command, tx_id);
 }
 
-Response DKVServer::executeCommand(const Command& command) {
+Response DKVServer::executeCommand(const Command& command, TransactionID tx_id) {
     if (!storage_engine_ || !command_handler_) {
         return Response(ResponseStatus::ERROR, "Storage engine or command handler not initialized");
     }
     
     // 检查是否是只读命令，用于内存管理
-    bool isReadOnly = command_handler_->isReadOnlyCommand(command.type);
+    bool isReadOnly = isReadOnlyCommand(command.type);
     
     // 如果不是只读命令，且设置了最大内存限制，则检查内存使用情况
     if (!isReadOnly && max_memory_ > 0) {
@@ -517,7 +535,7 @@ Response DKVServer::executeCommand(const Command& command) {
             if (eviction_policy_ != EvictionPolicy::NOEVICTION) {
                 // 尝试淘汰一些键
                 DKV_LOG_INFO("内存使用已达到上限，尝试执行淘汰策略");
-                evictKeys();
+                evictKeys(tx_id);
                 
                 // 重新检查内存使用情况
                 currentUsage = getMemoryUsage();
@@ -534,96 +552,97 @@ Response DKVServer::executeCommand(const Command& command) {
         }
     }
     
+    recordCommandForAOF(tx_id, command, command_handler_, transaction_manager_);
     bool need_inc_dirty = false;
     Response response;
     
     switch (command.type) {
         case CommandType::SET:
-            response = command_handler_->handleSetCommand(command, need_inc_dirty);
+            response = command_handler_->handleSetCommand(tx_id, command, need_inc_dirty);
             break;
         case CommandType::GET:
-            response = command_handler_->handleGetCommand(command);
+            response = command_handler_->handleGetCommand(tx_id, command);
             break;
         case CommandType::DEL:
-            response = command_handler_->handleDelCommand(command, need_inc_dirty);
+            response = command_handler_->handleDelCommand(tx_id, command, need_inc_dirty);
             break;
         case CommandType::EXISTS:
-            response = command_handler_->handleExistsCommand(command);
+            response = command_handler_->handleExistsCommand(tx_id, command);
             break;
         case CommandType::INCR:
-            response = command_handler_->handleIncrCommand(command, need_inc_dirty);
+            response = command_handler_->handleIncrCommand(tx_id, command, need_inc_dirty);
             break;
         case CommandType::DECR:
-            response = command_handler_->handleDecrCommand(command, need_inc_dirty);
+            response = command_handler_->handleDecrCommand(tx_id, command, need_inc_dirty);
             break;
         case CommandType::EXPIRE:
-            response = command_handler_->handleExpireCommand(command, need_inc_dirty);
+            response = command_handler_->handleExpireCommand(tx_id, command, need_inc_dirty);
             break;
         case CommandType::TTL:
-            response = command_handler_->handleTtlCommand(command);
+            response = command_handler_->handleTtlCommand(tx_id, command);
             break;
         
         // 哈希命令
         case CommandType::HSET:
-            response = command_handler_->handleHSetCommand(command, need_inc_dirty);
+            response = command_handler_->handleHSetCommand(tx_id, command, need_inc_dirty);
             break;
         case CommandType::HGET:
-            response = command_handler_->handleHGetCommand(command);
+            response = command_handler_->handleHGetCommand(tx_id, command);
             break;
         case CommandType::HGETALL:
-            response = command_handler_->handleHGetAllCommand(command);
+            response = command_handler_->handleHGetAllCommand(tx_id, command);
             break;
         case CommandType::HDEL:
-            response = command_handler_->handleHDeldCommand(command, need_inc_dirty);
+            response = command_handler_->handleHDeldCommand(tx_id, command, need_inc_dirty);
             break;
         case CommandType::HEXISTS:
-            response = command_handler_->handleHExistsCommand(command);
+            response = command_handler_->handleHExistsCommand(tx_id, command);
             break;
         case CommandType::HKEYS:
-            response = command_handler_->handleHKeysCommand(command);
+            response = command_handler_->handleHKeysCommand(tx_id, command);
             break;
         case CommandType::HVALS:
-            response = command_handler_->handleHValsCommand(command);
+            response = command_handler_->handleHValsCommand(tx_id, command);
             break;
         case CommandType::HLEN:
-            response = command_handler_->handleHLenCommand(command);
+            response = command_handler_->handleHLenCommand(tx_id, command);
             break;
         
         // 列表命令
         case CommandType::LPUSH:
-            response = command_handler_->handleLPushCommand(command, need_inc_dirty);
+            response = command_handler_->handleLPushCommand(tx_id, command, need_inc_dirty);
             break;
         case CommandType::RPUSH:
-            response = command_handler_->handleRPushCommand(command, need_inc_dirty);
+            response = command_handler_->handleRPushCommand(tx_id, command, need_inc_dirty);
             break;
         case CommandType::LPOP:
-            response = command_handler_->handleLPopCommand(command, need_inc_dirty);
+            response = command_handler_->handleLPopCommand(tx_id, command, need_inc_dirty);
             break;
         case CommandType::RPOP:
-            response = command_handler_->handleRPopCommand(command, need_inc_dirty);
+            response = command_handler_->handleRPopCommand(tx_id, command, need_inc_dirty);
             break;
         case CommandType::LLEN:
-            response = command_handler_->handleLLenCommand(command);
+            response = command_handler_->handleLLenCommand(tx_id, command);
             break;
         case CommandType::LRANGE:
-            response = command_handler_->handleLRangeCommand(command);
+            response = command_handler_->handleLRangeCommand(tx_id, command);
             break;
         
         // 集合命令
         case CommandType::SADD:
-            response = command_handler_->handleSAddCommand(command, need_inc_dirty);
+            response = command_handler_->handleSAddCommand(tx_id, command, need_inc_dirty);
             break;
         case CommandType::SREM:
-            response = command_handler_->handleSRemCommand(command, need_inc_dirty);
+            response = command_handler_->handleSRemCommand(tx_id, command, need_inc_dirty);
             break;
         case CommandType::SMEMBERS:
-            response = command_handler_->handleSMembersCommand(command);
+            response = command_handler_->handleSMembersCommand(tx_id, command);
             break;
         case CommandType::SISMEMBER:
-            response = command_handler_->handleSIsMemberCommand(command);
+            response = command_handler_->handleSIsMemberCommand(tx_id, command);
             break;
         case CommandType::SCARD:
-            response = command_handler_->handleSCardCommand(command);
+            response = command_handler_->handleSCardCommand(tx_id, command);
             break;
         
         // 服务器管理命令
@@ -665,54 +684,54 @@ Response DKVServer::executeCommand(const Command& command) {
 
         // 有序集合命令
         case CommandType::ZADD:
-            response = command_handler_->handleZAddCommand(command, need_inc_dirty);
+            response = command_handler_->handleZAddCommand(tx_id, command, need_inc_dirty);
             break;
         case CommandType::ZREM:
-            response = command_handler_->handleZRemCommand(command, need_inc_dirty);
+            response = command_handler_->handleZRemCommand(tx_id, command, need_inc_dirty);
             break;
         case CommandType::ZSCORE:
-            response = command_handler_->handleZScoreCommand(command);
+            response = command_handler_->handleZScoreCommand(tx_id, command);
             break;
         case CommandType::ZISMEMBER:
-            response = command_handler_->handleZIsMemberCommand(command);
+            response = command_handler_->handleZIsMemberCommand(tx_id, command);
             break;
         case CommandType::ZRANK:
-            response = command_handler_->handleZRankCommand(command);
+            response = command_handler_->handleZRankCommand(tx_id, command);
             break;
         case CommandType::ZREVRANK:
-            response = command_handler_->handleZRevRankCommand(command);
+            response = command_handler_->handleZRevRankCommand(tx_id, command);
             break;
         case CommandType::ZRANGE:
-            response = command_handler_->handleZRangeCommand(command);
+            response = command_handler_->handleZRangeCommand(tx_id, command);
             break;
         case CommandType::ZREVRANGE:
-            response = command_handler_->handleZRevRangeCommand(command);
+            response = command_handler_->handleZRevRangeCommand(tx_id, command);
             break;
         case CommandType::ZRANGEBYSCORE:
-            response = command_handler_->handleZRangeByScoreCommand(command);
+            response = command_handler_->handleZRangeByScoreCommand(tx_id, command);
             break;
         case CommandType::ZREVRANGEBYSCORE:
-            response = command_handler_->handleZRevRangeByScoreCommand(command);
+            response = command_handler_->handleZRevRangeByScoreCommand(tx_id, command);
             break;
         case CommandType::ZCOUNT:
-            response = command_handler_->handleZCountCommand(command);
+            response = command_handler_->handleZCountCommand(tx_id, command);
             break;
         case CommandType::ZCARD:
-            response = command_handler_->handleZCardCommand(command);
+            response = command_handler_->handleZCardCommand(tx_id, command);
             break;
         
         // 位图命令
         case CommandType::SETBIT:
-            response = command_handler_->handleSetBitCommand(command, need_inc_dirty);
+            response = command_handler_->handleSetBitCommand(tx_id, command, need_inc_dirty);
             break;
         case CommandType::GETBIT:
-            response = command_handler_->handleGetBitCommand(command);
+            response = command_handler_->handleGetBitCommand(tx_id, command);
             break;
         case CommandType::BITCOUNT:
-            response = command_handler_->handleBitCountCommand(command);
+            response = command_handler_->handleBitCountCommand(tx_id, command);
             break;
         case CommandType::BITOP:
-            response = command_handler_->handleBitOpCommand(command, need_inc_dirty);
+            response = command_handler_->handleBitOpCommand(tx_id, command, need_inc_dirty);
             break;
         
         // HyperLogLog命令
@@ -720,13 +739,13 @@ Response DKVServer::executeCommand(const Command& command) {
             response = command_handler_->handleRestoreHLLCommand(command, need_inc_dirty);
             break;
         case CommandType::PFADD:
-            response = command_handler_->handlePFAddCommand(command, need_inc_dirty);
+            response = command_handler_->handlePFAddCommand(tx_id, command, need_inc_dirty);
             break;
         case CommandType::PFCOUNT:
-            response = command_handler_->handlePFCountCommand(command);
+            response = command_handler_->handlePFCountCommand(tx_id, command);
             break;
         case CommandType::PFMERGE:
-            response = command_handler_->handlePFMergeCommand(command, need_inc_dirty);
+            response = command_handler_->handlePFMergeCommand(tx_id, command, need_inc_dirty);
             break;
         default:
             return Response(ResponseStatus::INVALID_COMMAND);
@@ -735,8 +754,6 @@ Response DKVServer::executeCommand(const Command& command) {
     // 如果需要增加脏标志，调用incDirty()
     if (need_inc_dirty) {
         incDirty();
-        // 如果启用了AOF持久化，记录命令
-        command_handler_->appendAOFCommand(command);
     }
     
     return response;
