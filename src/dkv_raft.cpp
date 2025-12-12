@@ -339,10 +339,8 @@ void Raft::Snapshot(int index, const std::vector<char>& snapshot) {
     DKV_LOG_INFO("快照创建完成，当前日志数量: ", log_.size(), ", 日志起始索引: ", logStartIndex_);
 }
 
-// 获取持久化字节数
+// 获取持久化字节数，需要加锁再调用
 size_t Raft::PersistBytes() const {
-    std::unique_lock<std::mutex> lock(mutex_);
-    
     // 估计持久化数据的大小
     size_t size = 0;
     
@@ -546,11 +544,10 @@ void Raft::ApplyLogs() {
             if (max_raft_state_ > 0 && PersistBytes() > max_raft_state_) {
                 // 创建快照
                 std::vector<char> snapshot = stateMachine_->Snapshot();
-                lock.unlock();
                 
                 // 保存快照
+                lock.unlock();
                 Snapshot(lastApplied_, snapshot);
-                
                 lock.lock();
             }
         } else {
@@ -670,7 +667,6 @@ void Raft::ReplicateLogs() {
         // 检查follower的nextIndex是否小于日志起始索引
         if (nextIndex_[i] <= logStartIndex_) {
             // 需要发送InstallSnapshot请求
-            lock.unlock();
             
             // 创建InstallSnapshot请求
             InstallSnapshotRequest snapshotRequest;
@@ -682,8 +678,8 @@ void Raft::ReplicateLogs() {
             snapshotRequest.leaderCommit = commitIndex_;
             
             // 发送InstallSnapshot请求
+            lock.unlock();
             InstallSnapshotResponse snapshotResponse = network_->SendInstallSnapshot(i, snapshotRequest);
-            
             lock.lock();
             
             // 检查响应
@@ -738,12 +734,10 @@ void Raft::ReplicateLogs() {
             
             auto currentNextIndex = nextIndex_[i];
             auto currentTerm = currentTerm_;
-            
-            lock.unlock();
-            
+
             // 发送请求
+            lock.unlock();
             AppendEntriesResponse response = network_->SendAppendEntries(i, request);
-            
             lock.lock();
             
             // 检查响应
@@ -766,7 +760,9 @@ void Raft::ReplicateLogs() {
                 matchIndex_[i] = nextIndex_[i] - 1;
                 
                 // 更新提交索引
+                lock.unlock();
                 UpdateCommitIndex();
+                lock.lock();
             } else {
                 // 减少nextIndex并重试
                 if (nextIndex_[i] > logStartIndex_) {
