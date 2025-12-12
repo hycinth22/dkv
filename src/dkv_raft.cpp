@@ -80,6 +80,7 @@ bool Raft::StartCommand(const std::vector<char>& command, int& index, int& term)
     
     // 如果不是领导者，返回false
     if (state_ != RaftState::LEADER) {
+        DKV_LOG_INFOF("[Node {}] 不是领导者，无法提交命令", me_);
         return false;
     }
     
@@ -107,7 +108,9 @@ bool Raft::StartCommand(const std::vector<char>& command, int& index, int& term)
     // 返回索引
     index = entry.index;
     
+    DKV_LOG_INFOF("[Node {}] 成功提交命令，索引: {}, 任期: {}", me_, index, term);
     
+
     // 立即调用ReplicateLogs，确保日志条目能够及时被复制到跟随者
     lock.unlock();
     ReplicateLogs();
@@ -170,17 +173,21 @@ AppendEntriesResponse Raft::OnAppendEntries(const AppendEntriesRequest& request)
         }
         
         if (index < log_.size()) {
+            DKV_LOG_DEBUGF("[Node {}] 删除冲突的日志条目，从索引 {} 开始", me_, index);
             log_.erase(log_.begin() + index, log_.end());
         }
         
         // 6. 检查并添加新的日志条目
         if (ValidateAndAppendEntries(request.entries, request.prevLogIndex)) {
+            DKV_LOG_DEBUGF("[Node {}] 添加了 {} 个新的日志条目，当前日志数量: {}", me_, request.entries.size(), log_.size());
             // 7. 持久化日志
             PersistLog();
             
             // 8. 更新提交索引
             if (request.leaderCommit > commitIndex_) {
+                int oldCommitIndex = commitIndex_;
                 commitIndex_ = std::min(request.leaderCommit, log_.empty() ? logStartIndex_ - 1 : log_.back().index);
+                DKV_LOG_INFOF("[Node {}] 更新提交索引从 {} 到 {}", me_, oldCommitIndex, commitIndex_);
                 lock.unlock();
                 ApplyLogs();
                 lock.lock();
@@ -189,11 +196,15 @@ AppendEntriesResponse Raft::OnAppendEntries(const AppendEntriesRequest& request)
             // 9. 返回成功
             response.success = true;
             response.matchIndex = log_.empty() ? logStartIndex_ - 1 : log_.back().index;
+            DKV_LOG_DEBUGF("[Node {}] AppendEntries 请求成功，matchIndex: {}", me_, response.matchIndex);
         } else {
             response.success = false;
             response.matchIndex = log_.empty() ? logStartIndex_ - 1 : log_.back().index;
+            DKV_LOG_DEBUGF("[Node {}] AppendEntries 请求失败：日志条目验证失败", me_);
             return response;
         }
+    } else {
+        DKV_LOG_DEBUGF("[Node {}] AppendEntries 请求失败：日志不一致，prevLogIndex: {}, prevLogTerm: {}", me_, request.prevLogIndex, request.prevLogTerm);
     }
     
     return response;
@@ -203,17 +214,22 @@ AppendEntriesResponse Raft::OnAppendEntries(const AppendEntriesRequest& request)
 RequestVoteResponse Raft::OnRequestVote(const RequestVoteRequest& request) {
     std::unique_lock<std::mutex> lock(mutex_);
     
+    DKV_LOG_DEBUGF("[Node {}] 收到来自节点 {} 的RequestVote请求，任期 {}，lastLogIndex {}，lastLogTerm {}", 
+                me_, request.candidateId, request.term, request.lastLogIndex, request.lastLogTerm);
+    
     RequestVoteResponse response;
     response.term = currentTerm_;
     response.voteGranted = false;
     
     // 1. 如果请求的任期小于当前任期，返回false
     if (request.term < currentTerm_) {
+        DKV_LOG_DEBUGF("[Node {}] RequestVote请求任期 {} < 当前任期 {}，拒绝投票", me_, request.term, currentTerm_);
         return response;
     }
     
     // 2. 如果请求的任期大于当前任期，更新当前任期和状态
     if (request.term > currentTerm_) {
+        DKV_LOG_INFOF("[Node {}] RequestVote请求任期 {} > 当前任期 {}，更新任期和状态为FOLLOWER", me_, request.term, currentTerm_);
         currentTerm_ = request.term;
         state_ = RaftState::FOLLOWER;
         votedFor_ = -1;
@@ -222,13 +238,22 @@ RequestVoteResponse Raft::OnRequestVote(const RequestVoteRequest& request) {
     
     // 3. 检查是否已经投票给其他候选人
     bool votedForValid = (votedFor_ == -1 || votedFor_ == request.candidateId);
+    if (!votedForValid) {
+        DKV_LOG_DEBUGF("[Node {}] 已经投票给节点 {}，拒绝投票给节点 {}", me_, votedFor_, request.candidateId);
+    }
     
     // 4. 检查候选人的日志是否至少和自己一样新
     bool logIsUpToDate = false;
+    int myLastLogIndex = log_.empty() ? (logStartIndex_ - 1) : log_.back().index;
+    int myLastLogTerm = log_.empty() ? 0 : log_.back().term;
+    
+    DKV_LOG_DEBUGF("[Node {}] 候选人日志: lastLogIndex {}, lastLogTerm {} | 自己的日志: lastLogIndex {}, lastLogTerm {}", 
+                me_, request.lastLogIndex, request.lastLogTerm, myLastLogIndex, myLastLogTerm);
     
     // 如果自己的日志为空，认为候选人的日志是最新的
     if (log_.empty()) {
         logIsUpToDate = true;
+        DKV_LOG_DEBUGF("[Node {}] 自己的日志为空，认为候选人日志是最新的", me_);
     } else {
         // 获取自己的最后一个日志条目
         const auto& lastEntry = log_.back();
@@ -236,20 +261,31 @@ RequestVoteResponse Raft::OnRequestVote(const RequestVoteRequest& request) {
         // 如果候选人的最后一个日志条目任期大于自己的，认为是最新的
         if (request.lastLogTerm > lastEntry.term) {
             logIsUpToDate = true;
+            DKV_LOG_DEBUGF("[Node {}] 候选人日志任期 {} > 自己的日志任期 {}，认为是最新的", me_, request.lastLogTerm, lastEntry.term);
         } else if (request.lastLogTerm == lastEntry.term) {
             // 如果任期相同，检查索引是否大于等于自己的
             if (request.lastLogIndex >= lastEntry.index) {
                 logIsUpToDate = true;
+                DKV_LOG_DEBUGF("[Node {}] 候选人日志任期相同 {}，索引 {} >= 自己的索引 {}，认为是最新的", 
+                            me_, request.lastLogTerm, request.lastLogIndex, lastEntry.index);
+            } else {
+                DKV_LOG_DEBUGF("[Node {}] 候选人日志任期相同 {}，索引 {} < 自己的索引 {}，认为不是最新的", 
+                            me_, request.lastLogTerm, request.lastLogIndex, lastEntry.index);
             }
+        } else {
+            DKV_LOG_DEBUGF("[Node {}] 候选人日志任期 {} < 自己的日志任期 {}，认为不是最新的", me_, request.lastLogTerm, lastEntry.term);
         }
     }
     
     // 5. 如果满足条件，投票给候选人
     if (votedForValid && logIsUpToDate) {
+        DKV_LOG_DEBUGF("[Node {}] 满足投票条件，投票给节点 {}，任期 {}", me_, request.candidateId, currentTerm_);
         votedFor_ = request.candidateId;
         PersistState();
         ResetElectionTimer();
         response.voteGranted = true;
+    } else {
+        DKV_LOG_DEBUGF("[Node {}] 不满足投票条件，拒绝投票给节点 {}", me_, request.candidateId);
     }
     
     return response;
@@ -259,17 +295,22 @@ RequestVoteResponse Raft::OnRequestVote(const RequestVoteRequest& request) {
 InstallSnapshotResponse Raft::OnInstallSnapshot(const InstallSnapshotRequest& request) {
     std::unique_lock<std::mutex> lock(mutex_);
     
+    DKV_LOG_DEBUGF("[Node {}] 收到来自节点 {} 的InstallSnapshot请求，任期 {}，lastIncludedIndex={}，lastIncludedTerm={}", 
+                me_, request.leaderId, request.term, request.lastIncludedIndex, request.lastIncludedTerm);
+    
     InstallSnapshotResponse response;
     response.term = currentTerm_;
     response.success = false;
     
     // 1. 如果请求的任期小于当前任期，返回false
     if (request.term < currentTerm_) {
+        DKV_LOG_DEBUGF("[Node {}] InstallSnapshot请求任期 {} < 当前任期 {}，拒绝请求", me_, request.term, currentTerm_);
         return response;
     }
     
     // 2. 如果请求的任期大于当前任期，更新当前任期和状态
     if (request.term > currentTerm_) {
+        DKV_LOG_INFOF("[Node {}] InstallSnapshot请求任期 {} > 当前任期 {}，更新任期和状态为FOLLOWER", me_, request.term, currentTerm_);
         currentTerm_ = request.term;
         state_ = RaftState::FOLLOWER;
         votedFor_ = -1;
@@ -285,33 +326,45 @@ InstallSnapshotResponse Raft::OnInstallSnapshot(const InstallSnapshotRequest& re
     
     int lastLogIndex = log_.empty() ? (logStartIndex_ - 1) : log_.back().index;
     
+    DKV_LOG_DEBUGF("[Node {}] InstallSnapshot处理：lastIncludedIndex={}, lastLogIndex={}, logStartIndex={}", 
+                me_, lastIncludedIndex, lastLogIndex, logStartIndex_);
+    
     // 如果快照包含的日志比当前日志新，应用快照
     if (lastIncludedIndex > lastLogIndex) {
+        DKV_LOG_DEBUGF("[Node {}] 快照包含的日志比当前日志新，应用快照", me_);
         // 清除所有旧日志
         log_.clear();
         logStartIndex_ = lastIncludedIndex + 1;
+        DKV_LOG_DEBUGF("[Node {}] 清除旧日志，更新logStartIndex={}", me_, logStartIndex_);
         
         // 应用快照到状态机
         stateMachine_->Restore(request.snapshot);
+        DKV_LOG_DEBUGF("[Node {}] 成功应用快照到状态机", me_);
         
         // 更新lastApplied_和commitIndex_
         lastApplied_ = lastIncludedIndex;
         commitIndex_ = std::max(commitIndex_, lastIncludedIndex);
+        DKV_LOG_INFOF("[Node {}] 更新lastApplied={}，commitIndex={}", me_, lastApplied_, commitIndex_);
         
         // 持久化快照
         persister_->SaveSnapshot(request.snapshot);
+        DKV_LOG_DEBUGF("[Node {}] 持久化快照成功", me_);
         
         response.success = true;
     } else {
+        DKV_LOG_DEBUGF("[Node {}] 快照包含的日志不比当前日志新，跳过应用快照", me_);
         response.success = true;
     }
     
     // 4. 更新commitIndex_从leaderCommit
     if (request.leaderCommit > commitIndex_) {
+        int oldCommitIndex = commitIndex_;
         commitIndex_ = std::min(request.leaderCommit, log_.empty() ? logStartIndex_ - 1 : log_.back().index);
+        DKV_LOG_INFOF("[Node {}] 从leaderCommit更新commitIndex从 {} 到 {}", me_, oldCommitIndex, commitIndex_);
         ApplyLogs();
     }
     
+    DKV_LOG_DEBUGF("[Node {}] InstallSnapshot请求处理完成，返回success={}", me_, response.success);
     return response;
 }
 
@@ -319,29 +372,37 @@ InstallSnapshotResponse Raft::OnInstallSnapshot(const InstallSnapshotRequest& re
 void Raft::Snapshot(int index, const std::vector<char>& snapshot) {
     std::unique_lock<std::mutex> lock(mutex_);
     
+    DKV_LOG_DEBUGF("[Node {}] 收到创建快照请求，索引 {}，当前logStartIndex={}", me_, index, logStartIndex_);
+    
     // 忽略比当前快照更旧的请求
     if (log_.empty() || index <= (logStartIndex_ - 1)) {
+        DKV_LOG_DEBUGF("[Node {}] 快照请求索引 {} <= logStartIndex-1={}，忽略请求", me_, index, logStartIndex_ - 1);
         return;
     }
     
     // 1. 保留快照索引及之后的日志
-        std::vector<RaftLogEntry> newLog;
-        for (const auto& entry : log_) {
-            if (entry.index > index) {
-                newLog.push_back(std::move(entry));
-            }
+    std::vector<RaftLogEntry> newLog;
+    for (const auto& entry : log_) {
+        if (entry.index > index) {
+            newLog.push_back(std::move(entry));
         }
+    }
+    
+    size_t oldLogSize = log_.size();
     log_.swap(newLog);
     
     // 更新日志起始索引
     logStartIndex_ = index + 1;
+    
+    DKV_LOG_DEBUGF("[Node {}] 快照创建：保留索引 {} 之后的日志，旧日志数量 {}，新日志数量 {}，更新logStartIndex={}", 
+                me_, index, oldLogSize, log_.size(), logStartIndex_);
     
     // 2. 持久化快照和状态
     persister_->SaveSnapshot(snapshot);
     PersistState();
     PersistLog();
     
-    DKV_LOG_INFO("快照创建完成，当前日志数量: ", log_.size(), ", 日志起始索引: ", logStartIndex_);
+    DKV_LOG_INFOF("[Node {}] 快照创建完成，当前日志数量: {}, 日志起始索引: {}", me_, log_.size(), logStartIndex_);
 }
 
 // 获取持久化字节数，需要加锁再调用
@@ -400,6 +461,7 @@ void Raft::StartElection() {
     
     // 发送请求并统计投票
     int votes = 1; // 自己的投票
+    DKV_LOG_DEBUGF("[Node {}] 开始选举，任期 {}，请求投票给 {} 个节点", me_, currentTerm_, peers_.size() - 1);
     
     for (int i = 0; i < peers_.size(); i++) {
         if (i == me_) {
@@ -407,6 +469,7 @@ void Raft::StartElection() {
         }
         
         // 发送请求
+        DKV_LOG_DEBUGF("[Node {}] 向节点 {} 发送RequestVote请求，任期 {}", me_, i, request.term);
         RequestVoteResponse response = network_->SendRequestVote(i, request);
         
         lock.lock();
@@ -414,6 +477,7 @@ void Raft::StartElection() {
         // 检查响应
         if (response.term > currentTerm_) {
             // 更新当前任期和状态
+            DKV_LOG_INFOF("[Node {}] 收到更高任期 {}，转换为FOLLOWER", me_, response.term);
             currentTerm_ = response.term;
             state_ = RaftState::FOLLOWER;
             votedFor_ = -1;
@@ -424,27 +488,32 @@ void Raft::StartElection() {
         
         if (response.voteGranted) {
             votes++;
+            DKV_LOG_DEBUGF("[Node {}] 获得节点 {} 的投票，当前票数: {}", me_, i, votes);
             
             // 检查是否获得多数投票
             if (votes > peers_.size() / 2) {
                 // 成为领导者
+                DKV_LOG_INFOF("[Node {}] 获得多数投票 ({}/{})，成为RAFT领导者，任期: {}", me_, votes, peers_.size(), currentTerm_);
                 state_ = RaftState::LEADER;
                 
                 // 初始化领导者相关数组
                 for (size_t j = 0; j < nextIndex_.size(); j++) {
                     nextIndex_[j] = log_.empty() ? logStartIndex_ : log_.back().index + 1;
                     matchIndex_[j] = 0;
+                    DKV_LOG_INFOF("[Node {}] 初始化节点 {}: nextIndex={}, matchIndex={}", me_, j, nextIndex_[j], matchIndex_[j]);
                 }
-                
-                DKV_LOG_INFO("成为RAFT领导者，任期: ", currentTerm_);
                 
                 lock.unlock();
                 return;
             }
+        } else {
+            DKV_LOG_DEBUGF("[Node {}] 未获得节点 {} 的投票，当前票数: {}", me_, i, votes);
         }
         
         lock.unlock();
     }
+    
+    DKV_LOG_INFOF("[Node {}] 选举失败，未获得足够的投票，当前票数: {}", me_, votes);
     
     // 没有获得多数投票，继续作为候选人
 }
@@ -463,6 +532,8 @@ void Raft::SendHeartbeats() {
     
     lock.unlock();
     
+    DKV_LOG_DEBUGF("[Node {}] 发送心跳，任期 {}，commitIndex: {}", me_, request.term, request.leaderCommit);
+    
     // 发送心跳给所有节点
     for (int i = 0; i < peers_.size(); i++) {
         if (i == me_) {
@@ -470,6 +541,7 @@ void Raft::SendHeartbeats() {
         }
         
         // 发送请求
+        DKV_LOG_DEBUGF("[Node {}] 向节点 {} 发送心跳，任期 {}", me_, i, request.term);
         AppendEntriesResponse response = network_->SendAppendEntries(i, request);
         
         lock.lock();
@@ -477,6 +549,7 @@ void Raft::SendHeartbeats() {
         // 检查响应
         if (response.term > currentTerm_) {
             // 更新当前任期和状态
+            DKV_LOG_INFOF("[Node {}] 收到更高任期 {}，转换为FOLLOWER", me_, response.term);
             currentTerm_ = response.term;
             state_ = RaftState::FOLLOWER;
             votedFor_ = -1;
@@ -500,11 +573,14 @@ void Raft::HandleElectionTimeout() {
     int64_t now = std::chrono::system_clock::now().time_since_epoch().count() / 1000000;
     if (now - lastElectionTime_ > electionTimeout_) {
         // 超时，成为候选人
-        DKV_LOG_INFO("选举超时，成为候选人，当前任期: ", currentTerm_);
+        DKV_LOG_INFOF("[Node {}] 选举超时，当前时间: {}, 上次选举时间: {}, 超时时间: {}, 成为候选人，当前任期: {}", 
+                me_, now, lastElectionTime_, electionTimeout_, currentTerm_);
         state_ = RaftState::CANDIDATE;
         lock.unlock();
         StartElection();
     } else {
+        DKV_LOG_DEBUGF("[Node {}] 未超时，当前时间: {}, 上次选举时间: {}, 剩余时间: {} ms", 
+                me_, now, lastElectionTime_, (electionTimeout_ - (now - lastElectionTime_)));
         lock.unlock();
         // 短暂休眠，避免CPU占用过高
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -515,10 +591,14 @@ void Raft::HandleElectionTimeout() {
 void Raft::ApplyLogs() {
     std::unique_lock<std::mutex> lock(mutex_);
     
+    DKV_LOG_DEBUGF("[Node {}] 开始应用日志，lastApplied={}，commitIndex={}", me_, lastApplied_, commitIndex_);
+    
     // 检查是否有新的日志需要应用
     while (lastApplied_ < commitIndex_) {
         // 寻找需要应用的日志条目
         int nextIndex = lastApplied_ + 1;
+        
+        DKV_LOG_DEBUGF("[Node {}] 准备应用日志索引 {}，logStartIndex={}", me_, nextIndex, logStartIndex_);
         
         // 检查日志是否在当前日志列表中
         const RaftLogEntry* entry = nullptr;
@@ -535,6 +615,7 @@ void Raft::ApplyLogs() {
         lock.unlock();
         
         if (entry != nullptr) {
+            DKV_LOG_DEBUGF("[Node {}] 找到日志条目，索引 {}，任期 {}，准备应用到状态机", me_, entry->index, entry->term);
             // 应用命令到状态机
             std::vector<char> result = stateMachine_->DoOp(entry->command);
             
@@ -542,9 +623,11 @@ void Raft::ApplyLogs() {
             
             // 更新应用索引
             lastApplied_ = nextIndex;
-            
+            DKV_LOG_DEBUGF("[Node {}] 成功应用日志索引 {}，更新lastApplied={}", me_, nextIndex, lastApplied_);
+
             // 检查是否需要创建快照
             if (max_raft_state_ > 0 && PersistBytes() > max_raft_state_) {
+                DKV_LOG_INFOF("[Node {}] 持久化数据大小超过阈值，创建快照，lastApplied={}", me_, lastApplied_);
                 // 创建快照
                 std::vector<char> snapshot = stateMachine_->Snapshot();
                 
@@ -556,16 +639,20 @@ void Raft::ApplyLogs() {
         } else {
             // 日志不在当前列表中，可能需要从快照恢复
             // 这里可以添加从快照恢复的逻辑
-            DKV_LOG_WARNING("无法找到日志条目，索引: ", nextIndex);
+            DKV_LOG_WARNINGF("[Node {}] 无法找到日志条目，索引: {}", me_, nextIndex);
             lock.unlock();
             break;
         }
     }
+    
+    DKV_LOG_DEBUGF("[Node {}] 日志应用完成，lastApplied={}，commitIndex={}", me_, lastApplied_, commitIndex_);
 }
 
 // 更新提交索引
 void Raft::UpdateCommitIndex() {
     std::unique_lock<std::mutex> lock(mutex_);
+    
+    DKV_LOG_DEBUGF("[Node {}] 开始更新提交索引，当前commitIndex={}，lastLogIndex={}", me_, commitIndex_, (log_.empty() ? (logStartIndex_ - 1) : log_.back().index));
     
     int newCommitIndex = commitIndex_;
     
@@ -584,19 +671,27 @@ void Raft::UpdateCommitIndex() {
             }
         }
         
+        DKV_LOG_DEBUGF("[Node {}] 检查索引 {}: 获得 {} 个匹配，需要 {} 个多数票", me_, i, count, (peers_.size() / 2) + 1);
+        
         // 如果获得多数投票，更新提交索引
         if (count > peers_.size() / 2) {
             newCommitIndex = i;
+            DKV_LOG_DEBUGF("[Node {}] 索引 {} 获得多数票，更新newCommitIndex={}", me_, i, newCommitIndex);
         } else {
+            DKV_LOG_DEBUGF("[Node {}] 索引 {} 未获得多数票，停止检查", me_, i);
             break;
         }
     }
     
     if (newCommitIndex > commitIndex_) {
+        int oldCommitIndex = commitIndex_;
         commitIndex_ = newCommitIndex;
+        DKV_LOG_INFOF("[Node {}] 更新提交索引从 {} 到 {}", me_, oldCommitIndex, commitIndex_);
         lock.unlock();
         ApplyLogs();
         lock.lock();
+    } else {
+        DKV_LOG_INFOF("[Node {}] 无需更新提交索引，保持为 {}", me_, commitIndex_);
     }
 }
 
@@ -662,14 +757,19 @@ bool Raft::ValidateAndAppendEntries(const std::vector<RaftLogEntry>& entries, in
 void Raft::ReplicateLogs() {
     std::unique_lock<std::mutex> lock(mutex_);
     
+    DKV_LOG_DEBUGF("[Node {}] 开始复制日志，任期 {}，当前日志数量: {}", me_, currentTerm_, log_.size());
+    
     for (int i = 0; i < peers_.size(); i++) {
         if (i == me_) {
             continue;
         }
         
+        DKV_LOG_DEBUGF("[Node {}] 处理节点 {}: nextIndex={}, matchIndex={}, logStartIndex={}", me_, i, nextIndex_[i], matchIndex_[i], logStartIndex_);
+        
         // 检查follower的nextIndex是否小于日志起始索引
         if (nextIndex_[i] < logStartIndex_) {
             // 需要发送InstallSnapshot请求
+            DKV_LOG_DEBUGF("[Node {}] 节点 {} nextIndex={} <= logStartIndex={}，发送InstallSnapshot请求", me_, i, nextIndex_[i], logStartIndex_);
             
             // 创建InstallSnapshot请求
             InstallSnapshotRequest snapshotRequest;
@@ -679,8 +779,9 @@ void Raft::ReplicateLogs() {
             snapshotRequest.lastIncludedTerm = 0;
             snapshotRequest.snapshot = persister_->ReadSnapshot();
             snapshotRequest.leaderCommit = commitIndex_;
-            
+
             // 发送InstallSnapshot请求
+            DKV_LOG_DEBUGF("[Node {}] 向节点 {} 发送InstallSnapshot请求，lastIncludedIndex={}", me_, i, snapshotRequest.lastIncludedIndex);
             lock.unlock();
             InstallSnapshotResponse snapshotResponse = network_->SendInstallSnapshot(i, snapshotRequest);
             lock.lock();
@@ -688,6 +789,7 @@ void Raft::ReplicateLogs() {
             // 检查响应
             if (snapshotResponse.term > currentTerm_) {
                 // 更新当前任期和状态
+                DKV_LOG_INFOF("[Node {}] 节点 {} 返回更高任期 {}，转换为FOLLOWER", me_, i, snapshotResponse.term);
                 currentTerm_ = snapshotResponse.term;
                 state_ = RaftState::FOLLOWER;
                 votedFor_ = -1;
@@ -696,13 +798,17 @@ void Raft::ReplicateLogs() {
             }
             
             if (state_ != RaftState::LEADER) {
+                DKV_LOG_INFOF("[Node {}] 不再是领导者，停止复制日志", me_);
                 break;
             }
             
             if (snapshotResponse.success) {
                 // 更新nextIndex和matchIndex
+                DKV_LOG_DEBUGF("[Node {}] 节点 {} InstallSnapshot成功，更新nextIndex={}，matchIndex={}", me_, i, logStartIndex_, logStartIndex_ - 1);
                 nextIndex_[i] = logStartIndex_;
                 matchIndex_[i] = logStartIndex_ - 1;
+            } else {
+                DKV_LOG_DEBUGF("[Node {}] 节点 {} InstallSnapshot失败", me_, i);
             }
         } else {
             // 准备发送的日志条目
@@ -726,6 +832,8 @@ void Raft::ReplicateLogs() {
                 }
             }
             
+            DKV_LOG_DEBUGF("[Node {}] 向节点 {} 发送 {} 条日志，prevLogIndex={}, prevLogTerm={}", me_, i, entries.size(), prevLogIndex, prevLogTerm);
+            
             // 创建AppendEntries请求
             AppendEntriesRequest request;
             request.term = currentTerm_;
@@ -746,6 +854,7 @@ void Raft::ReplicateLogs() {
             // 检查响应
             if (response.term > currentTerm) {
                 // 更新当前任期和状态
+                DKV_LOG_INFOF("[Node {}] 节点 {} 返回更高任期 {}，转换为FOLLOWER", me_, i, response.term);
                 currentTerm_ = response.term;
                 state_ = RaftState::FOLLOWER;
                 votedFor_ = -1;
@@ -754,6 +863,7 @@ void Raft::ReplicateLogs() {
             }
             
             if (state_ != RaftState::LEADER) {
+                DKV_LOG_INFOF("[Node {}] 不再是领导者，停止复制日志", me_);
                 break;
             }
             
@@ -761,6 +871,7 @@ void Raft::ReplicateLogs() {
                 // 更新nextIndex和matchIndex
                 nextIndex_[i] = currentNextIndex + entries.size();
                 matchIndex_[i] = nextIndex_[i] - 1;
+                DKV_LOG_DEBUGF("[Node {}] 节点 {} AppendEntries成功，更新nextIndex={}，matchIndex={}", me_, i, nextIndex_[i], matchIndex_[i]);
                 
                 // 更新提交索引
                 lock.unlock();
@@ -769,11 +880,14 @@ void Raft::ReplicateLogs() {
             } else {
                 // 减少nextIndex并重试
                 if (nextIndex_[i] > logStartIndex_) {
+                    DKV_LOG_DEBUGF("[Node {}] 节点 {} AppendEntries失败，减少nextIndex从 {} 到 {}", me_, i, nextIndex_[i], nextIndex_[i] - 1);
                     nextIndex_[i]--;
                 }
             }
         }
     }
+    
+    DKV_LOG_DEBUGF("[Node {}] 日志复制完成，当前commitIndex={}", me_, commitIndex_);
 }
 
 // 持久化状态
@@ -793,6 +907,7 @@ void Raft::PersistLog() {
 // 从持久化恢复
 void Raft::RestoreFromPersist() {
     if (!persister_) {
+        DKV_LOG_INFOF("[Node {}] 没有持久化对象，跳过恢复", me_);
         return;
     }
     
@@ -803,7 +918,7 @@ void Raft::RestoreFromPersist() {
     // 读取日志
     log_ = persister_->ReadLog();
     
-    DKV_LOG_INFO("从持久化恢复RAFT状态，任期: ", currentTerm_, ", 投票给: ", votedFor_, ", 日志数量: ", log_.size());
+    DKV_LOG_INFOF("[Node {}] 从持久化恢复RAFT状态，任期: {}, 投票给: {}, 日志数量: {}", me_, currentTerm_, votedFor_, log_.size());
 }
 
 
