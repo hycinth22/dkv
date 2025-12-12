@@ -135,6 +135,11 @@ bool Raft::IsLeader() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return running_ && state_ == RaftState::LEADER;
 }
+
+// 获取提交索引
+int Raft::GetCommitIndex() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return commitIndex_;
 }
 
 // 处理AppendEntries请求

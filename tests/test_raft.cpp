@@ -9,87 +9,18 @@
 #include <thread>
 #include <memory>
 #include <cassert>
+#include <random>
+#include <mutex>
+#include <atomic>
+#include <condition_variable>
 
 using namespace std;
 
 namespace dkv {
 
-// 模拟的RAFT网络实现，用于测试
-class MockRaftNetwork : public RaftNetwork {
-public:
-    MockRaftNetwork() {
-        // 初始化默认响应
-        mock_response_.term = 0;
-        mock_response_.success = true;
-        mock_vote_response_.term = 0;
-        mock_vote_response_.voteGranted = true;
-        mock_snapshot_response_.term = 0;
-        mock_snapshot_response_.success = true;
-    }
-
-    // 发送AppendEntries请求
-    AppendEntriesResponse SendAppendEntries(int serverId, const AppendEntriesRequest& request) override {
-        // 记录请求
-        last_append_request_ = request;
-        // 返回模拟响应
-        return mock_response_;
-    }
-
-    // 发送RequestVote请求
-    RequestVoteResponse SendRequestVote(int serverId, const RequestVoteRequest& request) override {
-        // 记录请求
-        last_vote_request_ = request;
-        // 返回模拟响应
-        mock_vote_response_.term = request.term;
-        return mock_vote_response_;
-    }
-
-    // 发送InstallSnapshot请求
-    InstallSnapshotResponse SendInstallSnapshot(int serverId, const InstallSnapshotRequest& request) override {
-        // 记录请求
-        last_snapshot_request_ = request;
-        // 返回模拟响应
-        return mock_snapshot_response_;
-    }
-
-    // 设置模拟响应
-    void SetMockAppendResponse(const AppendEntriesResponse& response) {
-        mock_response_ = response;
-    }
-
-    // 设置模拟投票响应
-    void SetMockVoteResponse(const RequestVoteResponse& response) {
-        mock_vote_response_ = response;
-    }
-
-    // 设置模拟快照响应
-    void SetMockSnapshotResponse(const InstallSnapshotResponse& response) {
-        mock_snapshot_response_ = response;
-    }
-
-    // 获取最后一个AppendEntries请求
-    AppendEntriesRequest GetLastAppendRequest() const {
-        return last_append_request_;
-    }
-
-    // 获取最后一个RequestVote请求
-    RequestVoteRequest GetLastVoteRequest() const {
-        return last_vote_request_;
-    }
-
-    // 获取最后一个InstallSnapshot请求
-    InstallSnapshotRequest GetLastSnapshotRequest() const {
-        return last_snapshot_request_;
-    }
-
-private:
-    AppendEntriesResponse mock_response_;
-    RequestVoteResponse mock_vote_response_;
-    InstallSnapshotResponse mock_snapshot_response_;
-    AppendEntriesRequest last_append_request_;
-    RequestVoteRequest last_vote_request_;
-    InstallSnapshotRequest last_snapshot_request_;
-};
+// 前向声明
+class RaftTest;
+class MockRaftNetwork;
 
 // 模拟的RAFT状态机实现，用于测试
 class MockRaftStateMachine : public RaftStateMachine {
@@ -141,6 +72,313 @@ private:
     vector<char> last_snapshot_;
     int snapshot_calls_;
     int restore_calls_;
+};
+
+// 测试框架类，类似于test.go中的Test结构体
+class RaftTest {
+public:
+    RaftTest(int servers) : servers_(servers), max_index_(0) {
+        // 初始化Raft实例
+        for (int i = 0; i < servers_; i++) {
+            vector<string> peers;
+            for (int j = 0; j < servers_; j++) {
+                peers.push_back("127.0.0.1:" + to_string(12345 + j));
+            }
+            
+            auto network = make_shared<MockRaftNetwork>(this, i);
+            auto state_machine = make_shared<MockRaftStateMachine>();
+            auto persister = make_shared<RaftFilePersister>("./test_raft_data" + to_string(i));
+            
+            auto raft = make_shared<Raft>(i, peers, persister, network, state_machine);
+            
+            raft_instances_.push_back(raft);
+            networks_.push_back(network);
+            state_machines_.push_back(state_machine);
+        }
+    }
+    
+    ~RaftTest() {
+        StopAll();
+    }
+    
+    // 启动所有Raft实例
+    void StartAll() {
+        for (auto& raft : raft_instances_) {
+            raft->Start();
+        }
+    }
+    
+    // 停止所有Raft实例
+    void StopAll() {
+        for (auto& raft : raft_instances_) {
+            raft->Stop();
+        }
+    }
+    
+    // 检查是否有且只有一个领导者
+    int CheckOneLeader() {
+        for (int iters = 0; iters < 10; iters++) {
+            vector<int> leaders;
+            for (int i = 0; i < servers_; i++) {
+                if (raft_instances_[i]->IsLeader()) {
+                    leaders.push_back(i);
+                }
+            }
+            
+            if (leaders.size() == 1) {
+                return leaders[0];
+            }
+            
+            this_thread::sleep_for(chrono::milliseconds(100));
+        }
+        
+        // 如果没有找到领导者，返回-1
+        return -1;
+    }
+    
+    // 检查所有节点的任期是否一致
+    int CheckTerms() {
+        int term = -1;
+        for (int i = 0; i < servers_; i++) {
+            int current_term = raft_instances_[i]->GetCurrentTerm();
+            if (term == -1) {
+                term = current_term;
+            } else if (term != current_term) {
+                return -1;
+            }
+        }
+        return term;
+    }
+    
+    // 检查没有领导者
+    bool CheckNoLeader() {
+        for (int i = 0; i < servers_; i++) {
+            if (raft_instances_[i]->IsLeader()) {
+                return false;
+            }
+        }
+        return true;
+    }
+    
+    // 提交一个命令并等待至少n个服务器提交
+    int One(const vector<char>& cmd, int expectedServers, bool retry = true) {
+        auto start_time = chrono::steady_clock::now();
+        int starts = 0;
+        
+        while (chrono::steady_clock::now() - start_time < chrono::seconds(10)) {
+            // 尝试所有服务器，找到领导者
+            int index = -1;
+            for (int i = 0; i < servers_; i++) {
+                starts = (starts + 1) % servers_;
+                auto& raft = raft_instances_[starts];
+                
+                if (raft->IsLeader()) {
+                    int term;
+                    bool ok = raft->StartCommand(cmd, index, term);
+                    if (ok) {
+                        break;
+                    }
+                }
+            }
+            
+            if (index != -1) {
+                // 等待命令被提交
+                auto t1 = chrono::steady_clock::now();
+                while (chrono::steady_clock::now() - t1 < chrono::seconds(5)) {
+                    int committed = 0;
+                    for (auto& raft : raft_instances_) {
+                        // 检查该索引是否被提交
+                        if (raft->GetCommitIndex() >= index) {
+                            committed++;
+                        }
+                    }
+                    
+                    if (committed >= expectedServers) {
+                        return index;
+                    }
+                    
+                    this_thread::sleep_for(chrono::milliseconds(100));
+                }
+                
+                if (!retry) {
+                    return -1;
+                }
+            } else {
+                this_thread::sleep_for(chrono::milliseconds(50));
+            }
+        }
+        
+        return -1;
+    }
+    
+    // 等待至少n个服务器提交指定索引的日志
+    bool Wait(int index, int n) {
+        auto timeout = chrono::milliseconds(10);
+        
+        for (int iters = 0; iters < 30; iters++) {
+            int committed = 0;
+            for (auto& raft : raft_instances_) {
+                // 检查该索引是否被提交
+                if (raft->GetCommitIndex() >= index) {
+                    committed++;
+                }
+            }
+            
+            if (committed >= n) {
+                return true;
+            }
+            
+            this_thread::sleep_for(timeout);
+            if (timeout < chrono::seconds(1)) {
+                timeout *= 2;
+            }
+        }
+        
+        return false;
+    }
+    
+    // 获取Raft实例
+    shared_ptr<Raft> GetRaft(int i) {
+        if (i >= 0 && i < servers_) {
+            return raft_instances_[i];
+        }
+        return nullptr;
+    }
+    
+    // 获取网络实例
+    shared_ptr<MockRaftNetwork> GetNetwork(int i) {
+        if (i >= 0 && i < servers_) {
+            return networks_[i];
+        }
+        return nullptr;
+    }
+    
+    // 获取状态机实例
+    shared_ptr<MockRaftStateMachine> GetStateMachine(int i) {
+        if (i >= 0 && i < servers_) {
+            return state_machines_[i];
+        }
+        return nullptr;
+    }
+    
+private:
+    int servers_;
+    vector<shared_ptr<Raft>> raft_instances_;
+    vector<shared_ptr<MockRaftNetwork>> networks_;
+    vector<shared_ptr<MockRaftStateMachine>> state_machines_;
+    int max_index_;
+};
+
+// 模拟的RAFT网络实现，用于测试
+class MockRaftNetwork : public RaftNetwork {
+public:
+    // 默认构造函数，用于单个Raft实例测试
+    MockRaftNetwork() : test_(nullptr), selfId_(0) {
+        // 初始化默认响应
+        mock_response_.term = 0;
+        mock_response_.success = true;
+        mock_vote_response_.term = 0;
+        mock_vote_response_.voteGranted = true;
+        mock_snapshot_response_.term = 0;
+        mock_snapshot_response_.success = true;
+    }
+    
+    // 带参数的构造函数，用于测试框架
+    MockRaftNetwork(RaftTest* test, int selfId) : test_(test), selfId_(selfId) {
+        // 初始化默认响应
+        mock_response_.term = 0;
+        mock_response_.success = true;
+        mock_vote_response_.term = 0;
+        mock_vote_response_.voteGranted = true;
+        mock_snapshot_response_.term = 0;
+        mock_snapshot_response_.success = true;
+    }
+
+    // 发送AppendEntries请求
+    AppendEntriesResponse SendAppendEntries(int serverId, const AppendEntriesRequest& request) override {
+        // 记录请求
+        last_append_request_ = request;
+        // 在测试框架中直接调用目标服务器的OnAppendEntries方法
+        if (test_) {
+            auto raft = test_->GetRaft(serverId);
+            if (raft) {
+                return raft->OnAppendEntries(request);
+            }
+        }
+        // 返回模拟响应
+        return mock_response_;
+    }
+
+    // 发送RequestVote请求
+    RequestVoteResponse SendRequestVote(int serverId, const RequestVoteRequest& request) override {
+        // 记录请求
+        last_vote_request_ = request;
+        // 在测试框架中直接调用目标服务器的OnRequestVote方法
+        if (test_) {
+            auto raft = test_->GetRaft(serverId);
+            if (raft) {
+                return raft->OnRequestVote(request);
+            }
+        }
+        // 返回模拟响应
+        mock_vote_response_.term = request.term;
+        return mock_vote_response_;
+    }
+
+    // 发送InstallSnapshot请求
+    InstallSnapshotResponse SendInstallSnapshot(int serverId, const InstallSnapshotRequest& request) override {
+        // 记录请求
+        last_snapshot_request_ = request;
+        // 在测试框架中直接调用目标服务器的OnInstallSnapshot方法
+        if (test_) {
+            auto raft = test_->GetRaft(serverId);
+            if (raft) {
+                return raft->OnInstallSnapshot(request);
+            }
+        }
+        // 返回模拟响应
+        return mock_snapshot_response_;
+    }
+
+    // 设置模拟响应
+    void SetMockAppendResponse(const AppendEntriesResponse& response) {
+        mock_response_ = response;
+    }
+
+    // 设置模拟投票响应
+    void SetMockVoteResponse(const RequestVoteResponse& response) {
+        mock_vote_response_ = response;
+    }
+
+    // 设置模拟快照响应
+    void SetMockSnapshotResponse(const InstallSnapshotResponse& response) {
+        mock_snapshot_response_ = response;
+    }
+
+    // 获取最后一个AppendEntries请求
+    AppendEntriesRequest GetLastAppendRequest() const {
+        return last_append_request_;
+    }
+
+    // 获取最后一个RequestVote请求
+    RequestVoteRequest GetLastVoteRequest() const {
+        return last_vote_request_;
+    }
+
+    // 获取最后一个InstallSnapshot请求
+    InstallSnapshotRequest GetLastSnapshotRequest() const {
+        return last_snapshot_request_;
+    }
+
+private:
+    RaftTest* test_;
+    int selfId_;
+    AppendEntriesResponse mock_response_;
+    RequestVoteResponse mock_vote_response_;
+    InstallSnapshotResponse mock_snapshot_response_;
+    AppendEntriesRequest last_append_request_;
+    RequestVoteRequest last_vote_request_;
+    InstallSnapshotRequest last_snapshot_request_;
 };
 
 // 测试Raft构造函数和基本状态
@@ -505,6 +743,185 @@ bool testRaftLeaderElection() {
     return true;
 }
 
+// 测试初始选举
+bool testRaftInitialElection() {
+    RaftTest test(3);
+    test.StartAll();
+    
+    // 检查是否有领导者
+    int leader = test.CheckOneLeader();
+    ASSERT_GT(leader, -1);
+    
+    // 等待一段时间，确保所有节点都知道领导者
+    this_thread::sleep_for(chrono::milliseconds(50));
+    
+    // 检查所有节点的任期是否一致
+    int term1 = test.CheckTerms();
+    ASSERT_GT(term1, 0);
+    
+    // 等待更长时间，确保任期不会无故改变
+    this_thread::sleep_for(chrono::milliseconds(1000));
+    
+    int term2 = test.CheckTerms();
+    ASSERT_EQ(term1, term2);
+    
+    // 检查是否仍然有领导者
+    leader = test.CheckOneLeader();
+    ASSERT_GT(leader, -1);
+    
+    test.StopAll();
+    
+    return true;
+}
+
+// 测试重新选举
+bool testRaftReElection() {
+    RaftTest test(3);
+    test.StartAll();
+    
+    // 检查初始领导者
+    int leader1 = test.CheckOneLeader();
+    ASSERT_GT(leader1, -1);
+    
+    // 停止领导者
+    test.GetRaft(leader1)->Stop();
+    
+    // 检查是否选举出新的领导者
+    int leader2 = test.CheckOneLeader();
+    ASSERT_GT(leader2, -1);
+    ASSERT_NE(leader1, leader2);
+    
+    // 重启原领导者
+    test.GetRaft(leader1)->Start();
+    
+    // 检查是否仍然有领导者
+    int leader3 = test.CheckOneLeader();
+    ASSERT_GT(leader3, -1);
+    
+    test.StopAll();
+    
+    return true;
+}
+
+// 测试基本一致性
+bool testRaftBasicAgree() {
+    RaftTest test(3);
+    test.StartAll();
+    
+    // 等待领导者选举
+    this_thread::sleep_for(chrono::milliseconds(300));
+    
+    // 提交命令
+    vector<char> command = {'t', 'e', 's', 't'};
+    int index = test.One(command, 3, false);
+    ASSERT_GT(index, 0);
+    
+    test.StopAll();
+    
+    return true;
+}
+
+// 测试跟随者故障
+bool testRaftFollowerFailure() {
+    RaftTest test(3);
+    test.StartAll();
+    
+    // 等待领导者选举
+    this_thread::sleep_for(chrono::milliseconds(300));
+    
+    // 提交第一个命令
+    vector<char> command1 = {'t', 'e', 's', 't', '1'};
+    int index1 = test.One(command1, 3, false);
+    ASSERT_GT(index1, 0);
+    
+    // 停止一个跟随者
+    int leader = test.CheckOneLeader();
+    int follower = (leader + 1) % 3;
+    test.GetRaft(follower)->Stop();
+    
+    // 提交第二个命令，应该只需要2个服务器确认
+    vector<char> command2 = {'t', 'e', 's', 't', '2'};
+    int index2 = test.One(command2, 2, false);
+    ASSERT_GT(index2, index1);
+    
+    test.StopAll();
+    
+    return true;
+}
+
+// 测试领导者故障
+bool testRaftLeaderFailure() {
+    RaftTest test(3);
+    test.StartAll();
+    
+    // 等待领导者选举
+    this_thread::sleep_for(chrono::milliseconds(300));
+    
+    // 提交第一个命令
+    vector<char> command1 = {'t', 'e', 's', 't', '1'};
+    int index1 = test.One(command1, 3, false);
+    ASSERT_GT(index1, 0);
+    
+    // 停止领导者
+    int leader1 = test.CheckOneLeader();
+    test.GetRaft(leader1)->Stop();
+    
+    // 应该选举出新的领导者
+    int leader2 = test.CheckOneLeader();
+    ASSERT_GT(leader2, -1);
+    ASSERT_NE(leader1, leader2);
+    
+    // 提交第二个命令
+    vector<char> command2 = {'t', 'e', 's', 't', '2'};
+    int index2 = test.One(command2, 2, false);
+    ASSERT_GT(index2, index1);
+    
+    test.StopAll();
+    
+    return true;
+}
+
+// 测试网络分区恢复
+bool testRaftFailAgree() {
+    RaftTest test(3);
+    test.StartAll();
+    
+    // 等待领导者选举
+    this_thread::sleep_for(chrono::milliseconds(300));
+    
+    // 提交第一个命令
+    vector<char> command1 = {'t', 'e', 's', 't', '1'};
+    int index1 = test.One(command1, 3, false);
+    ASSERT_GT(index1, 0);
+    
+    // 停止一个跟随者
+    int leader = test.CheckOneLeader();
+    int follower = (leader + 1) % 3;
+    test.GetRaft(follower)->Stop();
+    
+    // 提交多个命令
+    for (int i = 0; i < 4; i++) {
+        vector<char> command = {'t', 'e', 's', 't', static_cast<char>('2' + i)};
+        int index = test.One(command, 2, false);
+        ASSERT_GT(index, 0);
+    }
+    
+    // 重启跟随者
+    test.GetRaft(follower)->Start();
+    
+    // 等待一段时间，让跟随者赶上
+    this_thread::sleep_for(chrono::milliseconds(200));
+    
+    // 提交最后一个命令，应该所有3个服务器都确认
+    vector<char> command5 = {'t', 'e', 's', 't', '6'};
+    int index5 = test.One(command5, 3, false);
+    ASSERT_GT(index5, 0);
+    
+    test.StopAll();
+    
+    return true;
+}
+
 } // namespace dkv
 
 int main() {
@@ -526,6 +943,12 @@ int main() {
     runner.runTest("Raft安装快照", testRaftInstallSnapshot);
     runner.runTest("Raft连续命令", testRaftContinuousCommands);
     runner.runTest("Raft领导者选举", testRaftLeaderElection);
+    runner.runTest("Raft初始选举", testRaftInitialElection);
+    runner.runTest("Raft重新选举", testRaftReElection);
+    runner.runTest("Raft基本一致性", testRaftBasicAgree);
+    runner.runTest("Raft跟随者故障", testRaftFollowerFailure);
+    runner.runTest("Raft领导者故障", testRaftLeaderFailure);
+    runner.runTest("Raft网络分区恢复", testRaftFailAgree);
 
     // 打印测试总结
     runner.printSummary();

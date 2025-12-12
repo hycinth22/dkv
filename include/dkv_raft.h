@@ -161,6 +161,9 @@ public:
     
     // 判断是否是领导者
     bool IsLeader() const;
+    
+    // 获取提交索引
+    int GetCommitIndex() const;
 
     // 处理AppendEntries请求
     AppendEntriesResponse OnAppendEntries(const AppendEntriesRequest& request);
