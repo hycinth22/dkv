@@ -98,6 +98,12 @@ bool Raft::StartCommand(const std::vector<char>& command, int& index, int& term)
     // 持久化日志
     PersistLog();
     
+    // 更新领导者自己的matchIndex
+    if (me_ >= 0 && me_ < static_cast<int>(matchIndex_.size())) {
+        matchIndex_[me_] = entry.index;
+        DKV_LOG_INFOF("[Node {}] 更新自己的matchIndex为 {}", me_, matchIndex_[me_]);
+    }
+    
     // 返回索引
     index = entry.index;
     
@@ -118,8 +124,9 @@ int Raft::GetCurrentTerm() const {
 
 // 判断是否是领导者
 bool Raft::IsLeader() const {
-    std::unique_lock<std::mutex> lock(mutex_);
-    return state_ == RaftState::LEADER;
+    std::lock_guard<std::mutex> lock(mutex_);
+    return running_ && state_ == RaftState::LEADER;
+}
 }
 
 // 处理AppendEntries请求
