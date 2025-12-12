@@ -107,6 +107,11 @@ bool Raft::StartCommand(const std::vector<char>& command, int& index, int& term)
     // 返回索引
     index = entry.index;
     
+    
+    // 立即调用ReplicateLogs，确保日志条目能够及时被复制到跟随者
+    lock.unlock();
+    ReplicateLogs();
+    
     return true;
 }
 
@@ -516,14 +521,12 @@ void Raft::ApplyLogs() {
         int nextIndex = lastApplied_ + 1;
         
         // 检查日志是否在当前日志列表中
-        bool found = false;
-        RaftLogEntry entry;
+        const RaftLogEntry* entry = nullptr;
         
         if (nextIndex >= logStartIndex_) {
             for (const auto& logEntry : log_) {
                 if (logEntry.index == nextIndex) {
-                    entry = logEntry;
-                    found = true;
+                    entry = &logEntry;
                     break;
                 }
             }
@@ -531,9 +534,9 @@ void Raft::ApplyLogs() {
         
         lock.unlock();
         
-        if (found) {
+        if (entry != nullptr) {
             // 应用命令到状态机
-            std::vector<char> result = stateMachine_->DoOp(entry.command);
+            std::vector<char> result = stateMachine_->DoOp(entry->command);
             
             lock.lock();
             
