@@ -15,7 +15,7 @@ Raft::Raft(int me, const std::vector<std::string>& peers, std::shared_ptr<RaftPe
     : me_(me), peers_(peers), persister_(persister), network_(network), stateMachine_(stateMachine),
       state_(RaftState::FOLLOWER), currentTerm_(0), votedFor_(-1),
       commitIndex_(0), lastApplied_(0), running_(false), max_raft_state_(100 * 1024 * 1024),
-      logStartIndex_(1) {
+      logStartIndex_(1), currentLeaderId_(-1) {
     
     // 初始化领导者相关数组
     nextIndex_.resize(peers_.size(), 0);
@@ -142,6 +142,12 @@ int Raft::GetCommitIndex() const {
     return commitIndex_;
 }
 
+// 获取当前节点认为的领导者ID
+int Raft::GetCurrentLeaderId() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return currentLeaderId_;
+}
+
 // 处理AppendEntries请求
 AppendEntriesResponse Raft::OnAppendEntries(const AppendEntriesRequest& request) {
     std::unique_lock<std::mutex> lock(mutex_);
@@ -166,7 +172,10 @@ AppendEntriesResponse Raft::OnAppendEntries(const AppendEntriesRequest& request)
     // 3. 重置选举计时器
     ResetElectionTimer();
     
-    // 4. 检查日志一致性
+    // 4. 更新当前领导者ID
+    currentLeaderId_ = request.leaderId;
+    
+    // 5. 检查日志一致性
     if (IsLogConsistent(request.prevLogIndex, request.prevLogTerm)) {
         // 5. 删除冲突的日志条目
         size_t index = 0;
@@ -324,6 +333,9 @@ InstallSnapshotResponse Raft::OnInstallSnapshot(const InstallSnapshotRequest& re
     
     // 重置选举计时器
     ResetElectionTimer();
+    
+    // 更新当前领导者ID
+    currentLeaderId_ = request.leaderId;
     
     // 3. 处理快照
     int lastIncludedIndex = request.lastIncludedIndex;

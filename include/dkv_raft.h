@@ -164,6 +164,9 @@ public:
     
     // 获取提交索引
     int GetCommitIndex() const;
+    
+    // 获取当前节点认为的领导者ID
+    int GetCurrentLeaderId() const;
 
     // 处理AppendEntries请求
     AppendEntriesResponse OnAppendEntries(const AppendEntriesRequest& request);
@@ -262,6 +265,9 @@ private:
     
     // 快照配置
     int max_raft_state_; // 日志最大大小，超过则创建快照
+    
+    // 当前节点认为的领导者ID
+    int currentLeaderId_;
     
 };
 
