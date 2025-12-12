@@ -2,6 +2,7 @@
 #include "dkv_raft_network.h"
 #include "dkv_raft_statemachine.h"
 #include "dkv_raft_persist.h"
+#include "test_raft_common.h"
 #include "test_runner.hpp"
 #include <iostream>
 #include <vector>
@@ -235,12 +236,156 @@ bool testRaftStateMachinePartition() {
     return true;
 }
 
-// 注册状态机测试用例
-void registerRaftStateMachineTests() {
-    TEST_REGISTER(RaftStateMachineBasic, testRaftStateMachineBasic);
-    TEST_REGISTER(RaftStateMachineConcurrent, testRaftStateMachineConcurrent);
-    TEST_REGISTER(RaftStateMachineSnapshot, testRaftStateMachineSnapshot);
-    TEST_REGISTER(RaftStateMachineLeaderFailure, testRaftStateMachineLeaderFailure);
-    TEST_REGISTER(RaftStateMachinePartition, testRaftStateMachinePartition);
+// 测试重启后重放操作
+bool testRaftStateMachineRestartReplay() {
+    const int NINC = 50;
+    
+    RaftTest test(3);
+    test.StartAll();
+    
+    // 等待领导者选举
+    this_thread::sleep_for(chrono::milliseconds(300));
+    
+    // 提交多个递增命令
+    vector<char> command = {'i'};
+    for (int i = 0; i < NINC; i++) {
+        test.One(command, 3, false);
+    }
+    
+    // 检查状态机计数器值
+    for (int i = 0; i < 3; i++) {
+        auto sm = dynamic_pointer_cast<MockRaftStateMachine>(test.GetStateMachine(i));
+        ASSERT_EQ(sm->GetCounter(), NINC);
+    }
+    
+    // 停止所有节点
+    test.StopAll();
+    
+    // 重启所有节点
+    test.StartAll();
+    
+    // 等待领导者重新选举
+    this_thread::sleep_for(chrono::milliseconds(300));
+    
+    // 提交一个命令
+    test.One(command, 3, false);
+    
+    // 等待状态机应用
+    this_thread::sleep_for(chrono::milliseconds(200));
+    
+    // 检查所有状态机的计数器值
+    for (int i = 0; i < 3; i++) {
+        auto sm = dynamic_pointer_cast<MockRaftStateMachine>(test.GetStateMachine(i));
+        ASSERT_EQ(sm->GetCounter(), NINC + 1);
+    }
+    
+    test.StopAll();
+    
+    return true;
 }
 
+// 测试状态机关闭行为
+bool testRaftStateMachineShutdown() {
+    RaftTest test(3);
+    test.StartAll();
+    
+    // 等待领导者选举
+    this_thread::sleep_for(chrono::milliseconds(300));
+    
+    // 提交一些命令
+    vector<char> command = {'i'};
+    for (int i = 0; i < 10; i++) {
+        test.One(command, 3, false);
+    }
+    
+    // 停止所有节点
+    test.StopAll();
+    
+    // 重启所有节点
+    test.StartAll();
+    
+    // 等待领导者重新选举
+    this_thread::sleep_for(chrono::milliseconds(300));
+    
+    // 提交更多命令
+    for (int i = 0; i < 10; i++) {
+        test.One(command, 3, false);
+    }
+    
+    // 检查状态机计数器值
+    for (int i = 0; i < 3; i++) {
+        auto sm = dynamic_pointer_cast<MockRaftStateMachine>(test.GetStateMachine(i));
+        ASSERT_EQ(sm->GetCounter(), 20);
+    }
+    
+    test.StopAll();
+    
+    return true;
+}
+
+// 测试重启后提交操作
+bool testRaftStateMachineRestartSubmit() {
+    const int NINC = 30;
+    
+    RaftTest test(3);
+    test.StartAll();
+    
+    // 等待领导者选举
+    this_thread::sleep_for(chrono::milliseconds(300));
+    
+    // 提交多个递增命令
+    vector<char> command = {'i'};
+    for (int i = 0; i < NINC; i++) {
+        test.One(command, 3, false);
+    }
+    
+    // 停止所有节点
+    test.StopAll();
+    
+    // 重启所有节点
+    test.StartAll();
+    
+    // 等待领导者重新选举
+    this_thread::sleep_for(chrono::milliseconds(300));
+    
+    // 提交一个递增命令
+    test.One(command, 3, false);
+    
+    // 等待状态机应用
+    this_thread::sleep_for(chrono::milliseconds(200));
+    
+    // 检查所有状态机的计数器值
+    for (int i = 0; i < 3; i++) {
+        auto sm = dynamic_pointer_cast<MockRaftStateMachine>(test.GetStateMachine(i));
+        ASSERT_EQ(sm->GetCounter(), NINC + 1);
+    }
+    
+    test.StopAll();
+    
+    return true;
+}
+
+} // 闭合dkv命名空间
+
+int main() {
+    using namespace dkv;
+
+    cout << "DKV RAFT状态机测试\n" << endl;
+
+    TestRunner runner;
+
+    // 运行所有状态机测试
+    runner.runTest("Raft状态机基本", testRaftStateMachineBasic);
+    runner.runTest("Raft状态机并发", testRaftStateMachineConcurrent);
+    runner.runTest("Raft状态机快照", testRaftStateMachineSnapshot);
+    runner.runTest("Raft状态机领导者故障", testRaftStateMachineLeaderFailure);
+    runner.runTest("Raft状态机网络分区", testRaftStateMachinePartition);
+    runner.runTest("Raft状态机重启重放", testRaftStateMachineRestartReplay);
+    runner.runTest("Raft状态机关闭", testRaftStateMachineShutdown);
+    runner.runTest("Raft状态机重启提交", testRaftStateMachineRestartSubmit);
+
+    // 打印测试总结
+    runner.printSummary();
+
+    return 0;
+}
