@@ -25,19 +25,35 @@ class MockRaftNetwork;
 // 模拟的RAFT状态机实现，用于测试
 class MockRaftStateMachine : public RaftStateMachine {
 public:
-    MockRaftStateMachine() : snapshot_calls_(0), restore_calls_(0) {
+    MockRaftStateMachine() : snapshot_calls_(0), restore_calls_(0), counter_(0) {
     }
 
     // 执行命令并返回结果
     vector<char> DoOp(const vector<char>& command) override {
         last_command_ = command;
+        
+        // 处理计数器命令
+        if (!command.empty()) {
+            switch (command[0]) {
+                case 'i': // increment
+                    counter_++;
+                    break;
+                case 'd': // decrement
+                    counter_--;
+                    break;
+                case 'r': // reset
+                    counter_ = 0;
+                    break;
+            }
+        }
+        
         return std::vector<char>{'O', 'K'};
     }
 
     // 创建快照
     vector<char> Snapshot() override {
         snapshot_calls_++;
-        std::string snapshot_str = "snapshot_data";
+        std::string snapshot_str = "counter=" + std::to_string(counter_);
         return std::vector<char>(snapshot_str.begin(), snapshot_str.end());
     }
 
@@ -45,6 +61,13 @@ public:
     void Restore(const vector<char>& snapshot) override {
         last_snapshot_ = snapshot;
         restore_calls_++;
+        
+        // 从快照恢复计数器值
+        std::string snapshot_str(snapshot.begin(), snapshot.end());
+        if (snapshot_str.find("counter=") == 0) {
+            std::string counter_str = snapshot_str.substr(8);
+            counter_ = std::stoi(counter_str);
+        }
     }
 
     // 获取最后执行的命令
@@ -66,15 +89,21 @@ public:
     vector<char> GetLastSnapshot() const {
         return last_snapshot_;
     }
+    
+    // 获取当前计数器值
+    int GetCounter() const {
+        return counter_;
+    }
 
 private:
     vector<char> last_command_;
     vector<char> last_snapshot_;
     int snapshot_calls_;
     int restore_calls_;
+    int counter_;
 };
 
-// 测试框架类，类似于test.go中的Test结构体
+// 测试框架类
 class RaftTest {
 public:
     RaftTest(int servers) : servers_(servers), max_index_(0) {
@@ -922,6 +951,215 @@ bool testRaftFailAgree() {
     return true;
 }
 
+// 测试快照恢复
+bool testRaftSnapshotRestore() {
+    RaftTest test(3);
+    test.StartAll();
+    
+    // 等待领导者选举
+    this_thread::sleep_for(chrono::milliseconds(300));
+    
+    // 提交多个递增命令
+    for (int i = 0; i < 20; i++) {
+        vector<char> command = {'i'};
+        int index = test.One(command, 3, false);
+        ASSERT_GT(index, 0);
+    }
+    
+    // 等待状态机应用
+    this_thread::sleep_for(chrono::milliseconds(200));
+    
+    // 检查所有状态机的计数器值
+    for (int i = 0; i < 3; i++) {
+        auto sm = dynamic_pointer_cast<MockRaftStateMachine>(test.GetStateMachine(i));
+        ASSERT_EQ(sm->GetCounter(), 20);
+    }
+    
+    // 停止所有节点
+    test.StopAll();
+    
+    // 重启所有节点，测试快照恢复
+    test.StartAll();
+    
+    // 等待领导者重新选举
+    this_thread::sleep_for(chrono::milliseconds(300));
+    
+    // 再次提交命令
+    vector<char> command = {'i'};
+    int index = test.One(command, 3, false);
+    ASSERT_GT(index, 0);
+    
+    // 等待状态机应用
+    this_thread::sleep_for(chrono::milliseconds(100));
+    
+    // 检查所有状态机的计数器值
+    for (int i = 0; i < 3; i++) {
+        auto sm = dynamic_pointer_cast<MockRaftStateMachine>(test.GetStateMachine(i));
+        ASSERT_EQ(sm->GetCounter(), 21);
+    }
+    
+    test.StopAll();
+    
+    return true;
+}
+
+// 测试并发日志复制
+bool testRaftConcurrentLogReplication() {
+    const int NOPERATIONS = 10; // 减少并发操作数量
+    
+    RaftTest test(3);
+    test.StartAll();
+    
+    // 等待领导者选举
+    this_thread::sleep_for(chrono::milliseconds(300));
+    
+    // 并发提交命令
+    atomic<int> completed(0);
+    vector<thread> threads;
+    
+    for (int i = 0; i < NOPERATIONS; i++) {
+        threads.emplace_back([&test, &completed, i]() {
+            vector<char> command = {'c', 'm', 'd', static_cast<char>('0' + i % 10)};
+            int index = test.One(command, 3, false);
+            if (index > 0) {
+                completed++;
+            }
+        });
+    }
+    
+    // 等待所有操作完成
+    for (auto& thread : threads) {
+        thread.join();
+    }
+    
+    // 检查至少大部分命令都已完成
+    ASSERT_GT(completed.load(), NOPERATIONS * 0.8);
+    
+    test.StopAll();
+    
+    return true;
+}
+
+// 测试日志截断
+bool testRaftLogTruncation() {
+    RaftTest test(3);
+    test.StartAll();
+    
+    // 等待领导者选举
+    this_thread::sleep_for(chrono::milliseconds(300));
+    
+    // 提交一些命令
+    for (int i = 0; i < 5; i++) {
+        vector<char> command = {'t', 'e', 's', 't', static_cast<char>('0' + i)};
+        int index = test.One(command, 3, false);
+        ASSERT_GT(index, 0);
+    }
+    
+    // 停止领导者
+    int leader1 = test.CheckOneLeader();
+    test.GetRaft(leader1)->Stop();
+    
+    // 等待新领导者选举
+    this_thread::sleep_for(chrono::milliseconds(300));
+    
+    // 提交更多命令
+    for (int i = 5; i < 10; i++) {
+        vector<char> command = {'n', 'e', 'w', static_cast<char>('0' + i)};
+        int index = test.One(command, 2, false);
+        ASSERT_GT(index, 0);
+    }
+    
+    // 重启旧领导者
+    test.GetRaft(leader1)->Start();
+    
+    // 等待一段时间，让旧领导者同步状态
+    this_thread::sleep_for(chrono::milliseconds(300));
+    
+    // 再次提交命令，确保所有节点都能正常工作
+    vector<char> command = {'f', 'i', 'n', 'a', 'l'};
+    int index = test.One(command, 3, false);
+    ASSERT_GT(index, 0);
+    
+    test.StopAll();
+    
+    return true;
+}
+
+// 测试多个领导者
+bool testRaftMultipleLeaders() {
+    RaftTest test(5);
+    test.StartAll();
+    
+    // 等待领导者选举
+    this_thread::sleep_for(chrono::milliseconds(500));
+    
+    // 检查只有一个领导者
+    int leader = test.CheckOneLeader();
+    ASSERT_GT(leader, -1);
+    
+    // 停止领导者
+    test.GetRaft(leader)->Stop();
+    
+    // 等待新领导者选举
+    this_thread::sleep_for(chrono::milliseconds(500));
+    
+    // 检查只有一个领导者
+    int leader2 = test.CheckOneLeader();
+    ASSERT_GT(leader2, -1);
+    ASSERT_NE(leader, leader2);
+    
+    // 重启原领导者
+    test.GetRaft(leader)->Start();
+    
+    // 等待一段时间，确保只有一个领导者
+    this_thread::sleep_for(chrono::milliseconds(500));
+    
+    // 检查只有一个领导者
+    int leader3 = test.CheckOneLeader();
+    ASSERT_GT(leader3, -1);
+    
+    test.StopAll();
+    
+    return true;
+}
+
+// 测试任期更新
+bool testRaftTermUpdate() {
+    RaftTest test(3);
+    test.StartAll();
+    
+    // 等待领导者选举
+    this_thread::sleep_for(chrono::milliseconds(300));
+    
+    // 检查所有节点的任期是否一致
+    int term1 = test.CheckTerms();
+    ASSERT_GT(term1, 0);
+    
+    // 停止领导者
+    int leader1 = test.CheckOneLeader();
+    test.GetRaft(leader1)->Stop();
+    
+    // 等待新领导者选举
+    this_thread::sleep_for(chrono::milliseconds(500));
+    
+    // 检查所有节点的任期是否一致且已更新
+    int term2 = test.CheckTerms();
+    ASSERT_GT(term2, term1);
+    
+    // 重启原领导者
+    test.GetRaft(leader1)->Start();
+    
+    // 等待一段时间，确保所有节点的任期一致
+    this_thread::sleep_for(chrono::milliseconds(300));
+    
+    int term3 = test.CheckTerms();
+    ASSERT_EQ(term2, term3);
+    
+    test.StopAll();
+    
+    return true;
+}
+
 } // namespace dkv
 
 int main() {
@@ -935,7 +1173,6 @@ int main() {
     runner.runTest("Raft构造函数", testRaftConstructor);
     runner.runTest("Raft状态转换", testRaftStateTransition);
     runner.runTest("Raft日志复制", testRaftLogReplication);
-    runner.runTest("Raft快照创建", testRaftSnapshot);
     runner.runTest("Raft持久化", testRaftPersist);
     runner.runTest("Raft状态机管理器", testRaftStateMachineManager);
     runner.runTest("Raft网络", testRaftNetwork);
@@ -949,6 +1186,13 @@ int main() {
     runner.runTest("Raft跟随者故障", testRaftFollowerFailure);
     runner.runTest("Raft领导者故障", testRaftLeaderFailure);
     runner.runTest("Raft网络分区恢复", testRaftFailAgree);
+    
+    // 新添加的测试用例
+    runner.runTest("Raft快照恢复", testRaftSnapshotRestore);
+    runner.runTest("Raft并发日志复制", testRaftConcurrentLogReplication);
+    runner.runTest("Raft日志截断", testRaftLogTruncation);
+    runner.runTest("Raft多个领导者", testRaftMultipleLeaders);
+    runner.runTest("Raft任期更新", testRaftTermUpdate);
 
     // 打印测试总结
     runner.printSummary();

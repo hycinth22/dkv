@@ -696,7 +696,7 @@ void Raft::UpdateCommitIndex() {
         ApplyLogs();
         lock.lock();
     } else {
-        DKV_LOG_INFOF("[Node {}] 无需更新提交索引，保持为 {}", me_, commitIndex_);
+        DKV_LOG_DEBUGF("[Node {}] 无需更新提交索引，保持为 {}", me_, commitIndex_);
     }
 }
 
