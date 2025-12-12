@@ -668,7 +668,7 @@ void Raft::ReplicateLogs() {
         }
         
         // 检查follower的nextIndex是否小于日志起始索引
-        if (nextIndex_[i] <= logStartIndex_) {
+        if (nextIndex_[i] < logStartIndex_) {
             // 需要发送InstallSnapshot请求
             
             // 创建InstallSnapshot请求
