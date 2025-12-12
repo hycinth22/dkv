@@ -240,8 +240,18 @@ private:
     void printArgs(std::stringstream& /*unused*/) {}
 
     // 格式化版本 - 支持{}占位符
+    // 入口
+    template<typename... Args>
+    void printfArgs(std::stringstream& ss, const std::string& format, Args&&... args) {
+        if constexpr (sizeof...(args) > 0) {
+            _printfArgs(ss, format, 0, std::forward<Args>(args)...);
+        } else {
+            ss << format;
+        }
+    }
+
     template<typename T, typename... Args>
-    void printfArgs(std::stringstream& ss, const std::string& format, size_t pos, T&& arg, Args&&... args) {
+    void _printfArgs(std::stringstream& ss, const std::string& format, size_t pos, T&& arg, Args&&... args) {
         // 查找下一个占位符
         size_t placeholder_pos = format.find("{}", pos);
         if (placeholder_pos == std::string::npos) {
@@ -258,20 +268,10 @@ private:
         
         // 递归处理剩余的format和参数
         if constexpr (sizeof...(args) > 0) {
-            printfArgs(ss, format, placeholder_pos + 2, std::forward<Args>(args)...);
+            _printfArgs(ss, format, placeholder_pos + 2, std::forward<Args>(args)...);
         } else {
             // 没有更多参数，添加剩余的format字符串
             ss << format.substr(placeholder_pos + 2);
-        }
-    }
-    
-    // 外部接口
-    template<typename... Args>
-    void printfArgs(std::stringstream& ss, const std::string& format, Args&&... args) {
-        if constexpr (sizeof...(args) > 0) {
-            printfArgs(ss, format, 0, std::forward<Args>(args)...);
-        } else {
-            ss << format;
         }
     }
     
