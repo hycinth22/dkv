@@ -7,6 +7,7 @@
 #include "dkv_command_handler.hpp"
 #include "dkv_transaction.hpp"
 #include "dkv_transaction_manager.hpp"
+#include "dkv_raft.h"
 #include <memory>
 #include <thread>
 #include <atomic>
@@ -63,6 +64,20 @@ private:
     std::unique_ptr<TransactionManager> transaction_manager_; // 事务管理器
     mutable std::shared_mutex transaction_mutex_; // 事务锁
     std::unordered_map<int, uint64_t> client_transaction_ids_; // 客户端事务ID映射
+    
+    // RAFT配置
+    bool enable_raft_;             // 是否启用RAFT
+    int raft_node_id_;             // RAFT节点ID
+    int total_raft_nodes_;         // 总节点数
+    std::vector<std::string> raft_peers_; // RAFT集群节点列表
+    std::string raft_data_dir_;    // RAFT数据目录
+    int max_raft_state_;           // RAFT日志最大大小（超过则创建快照）
+    
+    // RAFT组件
+    std::shared_ptr<dkv::Raft> raft_; // RAFT实例
+    std::shared_ptr<dkv::RaftStateMachineManager> raft_state_machine_; // RAFT状态机
+    std::shared_ptr<dkv::RaftPersister> raft_persister_; // RAFT持久化
+    std::shared_ptr<dkv::RaftNetwork> raft_network_; // RAFT网络
 
 public:
     DKVServer(int port = 6379, size_t num_sub_reactors = 4, size_t num_workers = 8);

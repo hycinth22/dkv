@@ -1,6 +1,10 @@
 #include "dkv_server.hpp"
 #include "dkv_memory_allocator.hpp"
 #include "dkv_logger.hpp"
+#include "dkv_raft.h"
+#include "dkv_raft_network.h"
+#include "dkv_raft_statemachine.h"
+#include "dkv_raft_persist.h"
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -15,7 +19,8 @@ DKVServer::DKVServer(int port, size_t num_sub_reactors, size_t num_workers)
       enable_rdb_(true), rdb_filename_("dump.rdb"), rdb_save_interval_(3600), rdb_save_changes_(1000),
       rdb_changes_(0), last_save_time_(chrono::system_clock::now()), rdb_save_running_(false),
       enable_aof_(false), aof_filename_("appendonly.aof"), aof_fsync_policy_("everysec"),
-      auto_aof_rewrite_percentage_(100), auto_aof_rewrite_min_size_(64 * 1024 * 1024) {
+      auto_aof_rewrite_percentage_(100), auto_aof_rewrite_min_size_(64 * 1024 * 1024),
+      enable_raft_(false), raft_node_id_(0), total_raft_nodes_(1), max_raft_state_(100 * 1024 * 1024) {
 }
 
 DKVServer::~DKVServer() {
@@ -162,6 +167,17 @@ void DKVServer::stop() {
     rdb_save_running_ = false;
     if (rdb_save_thread_.joinable()) {
         rdb_save_thread_.join();
+    }
+    
+    // 停止RAFT组件（如果启用）
+    if (enable_raft_) {
+        DKV_LOG_INFO("停止RAFT组件");
+
+        // 停止RAFT实例
+        if (raft_) {
+            raft_->Stop();
+            raft_.reset();
+        }
     }
     
     DKV_LOG_INFO("DKV服务已停止");
@@ -453,6 +469,30 @@ bool DKVServer::initialize() {
         enable_aof_,
         transaction_manager_.get()
     );
+    
+    // 初始化RAFT组件（如果启用）
+    if (enable_raft_) {
+        DKV_LOG_INFO("初始化RAFT组件");
+        
+        // 创建RAFT状态机管理器
+        raft_state_machine_ = std::make_shared<RaftStateMachineManager>();
+        raft_state_machine_->SetCommandHandler(command_handler_.get());
+        raft_state_machine_->SetStorageEngine(storage_engine_.get());
+        
+        // 创建RAFT持久化
+        raft_persister_ = std::make_shared<RaftFilePersister>(raft_data_dir_);
+        
+        // 创建RAFT网络
+        raft_network_ = std::make_shared<RaftTcpNetwork>(raft_peers_);
+        
+        // 创建RAFT实例
+        raft_ = std::make_shared<Raft>(raft_node_id_, raft_peers_, raft_persister_, raft_network_, raft_state_machine_);
+
+        // 启动RAFT
+        raft_->Start();
+        
+        DKV_LOG_INFO("RAFT组件初始化完成，节点ID: ", raft_node_id_, ", 总节点数: ", total_raft_nodes_);
+    }
     
     DKV_LOG_INFO("DKV服务器初始化完成");
     return true;
@@ -842,6 +882,28 @@ bool DKVServer::parseConfigFile(const string& config_file) {
                 } else if (value == "serializable") {
                     transaction_isolation_level_ = TransactionIsolationLevel::SERIALIZABLE;
                 }
+            } else if (key == "enable_raft") {
+                // 是否启用RAFT
+                enable_raft_ = (value == "yes" || value == "true" || value == "1");
+            } else if (key == "raft_node_id") {
+                // RAFT节点ID
+                raft_node_id_ = stoi(value);
+            } else if (key == "total_raft_nodes") {
+                // 总节点数
+                total_raft_nodes_ = stoi(value);
+            } else if (key == "raft_data_dir") {
+                // RAFT数据目录
+                raft_data_dir_ = value;
+            } else if (key == "max_raft_state") {
+                // RAFT日志最大大小
+                max_raft_state_ = stoi(value);
+            } else if (key.find("raft_peer_") == 0) {
+                // RAFT集群节点
+                int peer_id = stoi(key.substr(10)); // 从"raft_peer_"后面提取ID
+                if ((size_t)peer_id >= raft_peers_.size()) {
+                    raft_peers_.resize(peer_id + 1);
+                }
+                raft_peers_[peer_id] = value;
             }
         }
     }

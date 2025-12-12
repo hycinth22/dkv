@@ -79,6 +79,9 @@ target_link_libraries(test_concurrency dkv_lib)
 add_executable(test_mvcc tests/test_mvcc.cpp)
 target_link_libraries(test_mvcc dkv_lib)
 
+add_executable(test_raft tests/test_raft.cpp)
+target_link_libraries(test_raft dkv_lib)
+
 # add_executable(test_mvcc tests/test_mvcc.cpp)
 # target_link_libraries(test_mvcc dkv_lib)
 
@@ -99,6 +102,7 @@ add_test(NAME rdb_tests COMMAND test_rdb)
 add_test(NAME aof_tests COMMAND test_aof)
 add_test(NAME concurrency_tests COMMAND test_concurrency)
 add_test(NAME mvcc_tests COMMAND test_mvcc)
+add_test(NAME raft_tests COMMAND test_raft)
 # add_test(NAME mvcc_tests COMMAND test_mvcc)
 
 # benchmark tests
