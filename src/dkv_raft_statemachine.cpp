@@ -14,7 +14,7 @@ RaftStateMachineManager::RaftStateMachineManager()
     : commandHandler_(nullptr), storageEngine_(nullptr), dkvServer_(nullptr) {
 }
 
-Response RaftStateMachineManager::DoOp(const Command& command) {
+Response RaftStateMachineManager::DoOp(const RaftCommand& raft_cmd) {
     std::lock_guard<std::mutex> lock(mutex_);
     
     if (!dkvServer_) {
@@ -24,10 +24,10 @@ Response RaftStateMachineManager::DoOp(const Command& command) {
     
     try {
         // 调用DKVServer::executeCommand执行命令
-        Response response = dkvServer_->executeCommand(command, NO_TX);
+        Response response = dkvServer_->doCommandNative(raft_cmd.db_command, raft_cmd.tx_id);
         
         DKV_LOG_DEBUGF("执行RAFT命令成功，命令类型: {}, 响应状态: {}", 
-                     static_cast<int>(command.type), static_cast<int>(response.status));
+                     static_cast<int>(raft_cmd.db_command.type), static_cast<int>(response.status));
         
         return response;
     } catch (const std::exception& e) {

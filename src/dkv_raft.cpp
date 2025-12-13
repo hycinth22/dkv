@@ -77,7 +77,7 @@ void Raft::Stop() {
 }
 
 // 提交命令到RAFT日志
-bool Raft::StartCommand(const shared_ptr<Command>& command, int& index, int& term) {
+bool Raft::StartCommand(const shared_ptr<RaftCommand>& raft_cmd, int& index, int& term) {
     std::unique_lock<std::mutex> lock(mutex_);
     
     // 如果不是领导者，返回false
@@ -92,7 +92,7 @@ bool Raft::StartCommand(const shared_ptr<Command>& command, int& index, int& ter
     // 创建日志条目
     RaftLogEntry entry;
     entry.term = currentTerm_;
-    entry.command = command;
+    entry.command = raft_cmd;
     entry.index = log_.size() + logStartIndex_;
     
     // 添加到日志
@@ -110,7 +110,7 @@ bool Raft::StartCommand(const shared_ptr<Command>& command, int& index, int& ter
     // 返回索引
     index = entry.index;
     
-    DKV_LOG_INFOF("[Node {}] 成功开始命令，索引: {}, 任期: {}, 命令描述: {}", me_, index, term, command->desc());
+    DKV_LOG_INFOF("[Node {}] 成功开始命令，索引: {}, 任期: {}, 命令描述: {}", me_, index, term, raft_cmd->db_command.desc());
     
     // 立即调用ReplicateLogs，确保日志条目能够及时被复制到跟随者
     lock.unlock();
@@ -145,8 +145,64 @@ int Raft::GetCommitIndex() const {
 
 // 获取当前节点认为的领导者ID
 int Raft::GetCurrentLeaderId() const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<std::mutex> lock(mutex_);
     return currentLeaderId_;
+}
+
+// 添加命令结果
+std::shared_ptr<Raft::CommandResult> Raft::addCommandResult(int index, int expected_term) {
+    std::unique_lock<std::mutex> lock(mutex_);
+    auto result = std::make_shared<CommandResult>();
+    result->expected_term = expected_term;
+    command_results_[index] = result;
+    return result;
+}
+
+// 等待命令结果
+Response Raft::waitForCommandResult(int index, int expected_term, int timeout_ms) {
+    auto result = addCommandResult(index, expected_term);
+    std::unique_lock<std::mutex> lock(result->mu);
+    
+    // 等待命令完成或超时
+    if (!result->done) {
+        if (result->cv.wait_for(lock, std::chrono::milliseconds(timeout_ms)) == std::cv_status::timeout) {
+            // 超时，返回错误
+            return Response(ResponseStatus::ERROR, "Command execution timed out");
+        }
+    }
+    
+    // 返回结果
+    return result->result;
+}
+
+// 设置命令结果
+void Raft::setCommandResult(int index, int actual_term, const Response& result) {
+    std::unique_lock<std::mutex> lock(mutex_);
+    auto it = command_results_.find(index);
+    if (it != command_results_.end()) {
+        auto command_result = it->second;
+        {
+            std::unique_lock<std::mutex> result_lock(command_result->mu);
+            
+            // 进行一致性检查：actual_term必须与expected_term匹配
+            if (command_result->expected_term != actual_term) {
+                // 不一致，拒绝应用并记录异常信息
+                DKV_LOG_ERRORF("[Node {}] 命令一致性检查失败：index={}, expected_term={}, actual_term={}", 
+                              me_, index, command_result->expected_term, actual_term);
+                
+                // 返回错误结果
+                command_result->result = Response(ResponseStatus::ERROR, "Command consistency check failed: term mismatch");
+                command_result->done = true;
+            } else {
+                // 一致，正常设置结果
+                command_result->result = result;
+                command_result->done = true;
+            }
+        }
+        command_result->cv.notify_all();
+        // 移除已完成的命令结果，避免内存泄漏
+        command_results_.erase(it);
+    }
 }
 
 // 处理AppendEntries请求
@@ -437,10 +493,9 @@ size_t Raft::PersistBytes() const {
         size += sizeof(entry.term);
         size += sizeof(entry.index);
         if (entry.command) {
-            size += entry.command->PersistBytes();
+            size += entry.command->db_command.PersistBytes();
         }
     }
-    
     return size;
 }
 
@@ -638,11 +693,14 @@ void Raft::ApplyLogs() {
             // 应用命令到状态机
             Response result = stateMachine_->DoOp(*entry->command);
             
+            // 设置命令结果，通知等待的客户端
+            setCommandResult(entry->index, entry->term, result);
+            
             lock.lock();
             
             // 更新应用索引
             lastApplied_ = nextIndex;
-            DKV_LOG_INFOF("[Node {}] 成功提交日志。索引 {}，更新lastApplied={}", me_, nextIndex, lastApplied_);
+            DKV_LOG_INFOF("[Node {}] 成功提交日志。索引 {}，任期 {}，更新lastApplied={}", me_, nextIndex, entry->term, lastApplied_);
 
             // 检查是否需要创建快照
             if (max_raft_state_ > 0 && PersistBytes() > max_raft_state_) {

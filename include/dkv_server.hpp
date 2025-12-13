@@ -103,8 +103,9 @@ public:
     bool isRunning() const;
     
     // 执行命令
-    Response executeCommand(int client_fd, const Command& command);
+    Response OnClientCommand(int client_fd, const Command& command);
     Response executeCommand(const Command& command, TransactionID tx_id);
+    Response doCommandNative(const Command& command, TransactionID tx_id);
     
     // 获取内存使用量
     size_t getMemoryUsage() const;

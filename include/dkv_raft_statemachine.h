@@ -16,7 +16,7 @@ public:
     RaftStateMachineManager();
     
     // 执行命令
-    Response DoOp(const Command& command) override;
+    Response DoOp(const RaftCommand& command) override;
     
     // 创建快照
     std::vector<char> Snapshot() override;

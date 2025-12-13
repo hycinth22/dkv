@@ -26,6 +26,13 @@ static constexpr int RAFT_INVALID_INDEX = -1;
 static constexpr int RAFT_DEFAULT_ELECTION_TIMEOUT = 500; // 默认选举超时时间（毫秒）
 static constexpr int RAFT_DEFAULT_HEARTBEAT_INTERVAL = 100; // 默认心跳间隔（毫秒）
 
+struct RaftCommand {
+    RaftCommand(TransactionID tx_id, const Command& db_command)
+        : tx_id(tx_id), db_command(db_command) {}
+    TransactionID tx_id;
+    Command db_command;
+};
+
 // RAFT节点状态枚举
 enum class RaftState {
     FOLLOWER,
@@ -36,7 +43,7 @@ enum class RaftState {
 // RAFT日志条目结构
 struct RaftLogEntry {
     int term;                 // 日志的任期
-    std::shared_ptr<Command> command;  // 日志命令
+    std::shared_ptr<RaftCommand> command;  // 日志命令
     int index;                // 日志索引
 };
 
@@ -88,7 +95,7 @@ public:
     virtual ~RaftStateMachine() = default;
     
     // 执行命令并返回结果
-    virtual Response DoOp(const Command& command) = 0;
+    virtual Response DoOp(const RaftCommand& command) = 0;
     
     // 创建快照
     virtual std::vector<char> Snapshot() = 0;
@@ -158,10 +165,13 @@ public:
     void Stop();
     
     // 提交命令到RAFT日志
-    bool StartCommand(const Command& command, int& index, int& term) {
-        return StartCommand(std::make_shared<Command>(command), index, term);
+    bool StartCommand(const RaftCommand& command, int& index, int& term) {
+        return StartCommand(std::make_shared<RaftCommand>(command), index, term);
     }
-    bool StartCommand(const std::shared_ptr<Command>& command, int& index, int& term);
+    bool StartCommand(const std::shared_ptr<RaftCommand>& command, int& index, int& term);
+
+    // 等待命令结果
+    Response waitForCommandResult(int index, int expected_term, int timeout_ms);
 
     // 获取当前节点ID
     int GetMe() const { return me_; }
@@ -281,6 +291,25 @@ private:
     
     // 当前节点认为的领导者ID
     int currentLeaderId_;
+    
+    // 命令结果映射，用于等待命令被提交和应用
+    struct CommandResult {
+        std::mutex mu;
+        std::condition_variable cv;
+        bool done;
+        Response result;
+        int expected_term; // 记录startcommand返回的term值，用于一致性检查
+        CommandResult() : done(false), expected_term(0) {}
+    };
+    
+    // 命令结果映射，键为日志索引，值为命令结果
+    std::unordered_map<int, std::shared_ptr<CommandResult>> command_results_;
+    
+    // 添加命令结果
+    std::shared_ptr<CommandResult> addCommandResult(int index, int expected_term);
+    
+    // 设置命令结果
+    void setCommandResult(int index, int actual_term, const Response& result);
     
 };
 

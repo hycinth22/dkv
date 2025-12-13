@@ -35,8 +35,8 @@ void RaftFilePersister::SaveLog(const std::vector<RaftLogEntry>& log) {
                 continue;
             }
             // 保存索引、任期、命令
-            file << entry.index << " " << entry.term;
-            entry.command->write(file);
+            file << entry.index << " " << entry.term << " " << entry.command->tx_id;
+            entry.command->db_command.write(file);
             file << std::endl;
         }
         file.close();
@@ -98,14 +98,13 @@ std::vector<RaftLogEntry> RaftFilePersister::ReadLog() {
         while (getline(file, line)) {
             std::istringstream iss(line);
             int index, term;
-            int commandType;
-            int argsCount;
-            
-            if (iss >> index >> term >> commandType >> argsCount) {
+            TransactionID txId = 0;
+            if (iss >> index >> term >> txId) {
                 RaftLogEntry entry;
                 entry.index = index;
                 entry.term = term;
-                entry.command->read(iss);
+                entry.command = std::make_shared<RaftCommand>(txId, Command());
+                entry.command->db_command.read(iss);
                 
                 log.push_back(entry);
             }

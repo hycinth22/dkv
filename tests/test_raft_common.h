@@ -125,7 +125,7 @@ public:
                 
                 if (raft->IsLeader()) {
                     int term;
-                    bool ok = raft->StartCommand(cmd, index, term);
+                    bool ok = raft->StartCommand(RaftCommand(0, cmd), index, term);
                     if (ok) {
                         break;
                     }
@@ -226,13 +226,13 @@ public:
     MockRaftStateMachine() : snapshot_calls_(0), restore_calls_(0), counter_(0) {
     }
 
-    // 执行命令并返回结果
-    Response DoOp(const Command& command) override {
-        //DKV_LOG_INFOF("MockRaftStateMachine::DoOp: {}", command.desc());
+    // 执行命令并返回结果   
+    Response DoOp(const RaftCommand& command) override {
+        //DKV_LOG_INFOF("MockRaftStateMachine::DoOp: {}", command.db_command.desc());
         //DKV_LOG_INFOF("MockRaftStateMachine::DoOp: counter_ = {}", counter_);
         // 处理计数器命令
-        if (!command.args.empty()) {
-            switch (command.args[0][0]) {
+        if (!command.db_command.args.empty()) {
+            switch (command.db_command.args[0][0]) {
                 case 'i': // increment
                     counter_++;
                     break;

@@ -374,17 +374,13 @@ void DKVServer::evictKeys(TransactionID tx_id) {
         }
         
         // 删除键
-        size_t key_size = storage_engine_->getKeySize(key); // todo: here should begin a tx?
-        if (storage_engine_->del(tx_id, key)) {
+        size_t key_size = storage_engine_->getKeySize(key);
+        Command del_cmd(CommandType::DEL, {string(key)});  // todo: generate a batch delete command to avoid waiting for raft commit for too much time
+        Response response = executeCommand(del_cmd, tx_id);
+        if (response.status == ResponseStatus::OK) {
             DKV_LOG_INFO("淘汰键: ", key.c_str(), " 大小: ", key_size);
             current_usage -= key_size;
             evicted_count++;
-
-            // 如果启用了AOF持久化，记录DEL命令
-            if (enable_aof_ && aof_persistence_) {
-                Command del_cmd(CommandType::DEL, {string(key)});
-                recordCommandForAOF(tx_id, del_cmd, command_handler_, transaction_manager_);
-            }
         }
     }
     
@@ -506,110 +502,52 @@ bool DKVServer::initialize() {
     return true;
 }
 
-Response DKVServer::executeCommand(int client_fd, const Command& command) {
+
+Response DKVServer::OnClientCommand(int client_fd, const Command& command) {
     unique_lock<mutex> serializable_lock(serializable_mutex_, defer_lock);
     if (transaction_isolation_level_ == TransactionIsolationLevel::SERIALIZABLE) {
         serializable_lock.lock();
     }
-    int tx_id = -1;
-    {
+    int tx_id = NO_TX;
+    if (transaction_isolation_level_ != TransactionIsolationLevel::READ_UNCOMMITTED) {
         shared_lock<shared_mutex> readlock_client_transaction_ids_(transaction_mutex_);
         auto it = client_transaction_ids_.find(client_fd);
-        if (it == client_transaction_ids_.end()) {
-            // 客户端未开启事务，直接执行命令
-            readlock_client_transaction_ids_.unlock();
-            return executeCommand(command, NO_TX);
+        if (it != client_transaction_ids_.end()) {
+            tx_id = it->second;
         }
-        tx_id = it->second;
     }
-    auto begin = [this, client_fd]() {
-        // 开启事务
-        TransactionID tx_id = transaction_manager_->begin();
-        lock_guard writelock_client_transaction_ids_(transaction_mutex_);
-        client_transaction_ids_[client_fd] = tx_id;
-    };
-    auto commit = [this, client_fd](TransactionID tx_id) {
-        // 提交事务
-        transaction_manager_->commit(tx_id);
-        lock_guard writelock_client_transaction_ids_(transaction_mutex_);
-        client_transaction_ids_.erase(client_fd);
-    };
-    auto rollback = [this, client_fd](TransactionID tx_id) {
-        // 回滚事务
-        transaction_manager_->rollback(tx_id);
-        lock_guard writelock_client_transaction_ids_(transaction_mutex_);
-        client_transaction_ids_.erase(client_fd);
-    };
-    // 检查是否是事务命令
-    if (command.type == CommandType::MULTI) {
-        if (tx_id != NO_TX) {
-            return Response(ResponseStatus::ERROR, "Transaction already started");
+    Response response = executeCommand(command, tx_id);
+    if (response.status == ResponseStatus::OK) {
+        if (command.type == CommandType::MULTI) {
+            tx_id = stoi(response.message);
+            lock_guard writelock_client_transaction_ids_(transaction_mutex_);
+            client_transaction_ids_[client_fd] = tx_id;
+        } else if (command.type == CommandType::EXEC || command.type == CommandType::DISCARD) {
+            lock_guard writelock_client_transaction_ids_(transaction_mutex_);
+            client_transaction_ids_.erase(client_fd);
         }
-        begin();
-        return Response(ResponseStatus::OK, "OK");
-    } else if (command.type == CommandType::EXEC) {
-        if (tx_id == NO_TX) {
-            return Response(ResponseStatus::ERROR, "Transaction not started");
-        }
-        auto commands = transaction_manager_->getTransaction(tx_id).get_commands();
-        command_handler_->appendAOFCommands(commands);
-        commit(tx_id);
-        return Response(ResponseStatus::OK, "OK");
-    } else if (command.type == CommandType::DISCARD) {
-        if (tx_id == NO_TX) {
-            return Response(ResponseStatus::ERROR, "Transaction not started");
-        }
-        rollback(tx_id);
-        return Response(ResponseStatus::OK, "OK");
     }
-    if (commandNotAllowedInTx(command.type) && tx_id != NO_TX) {
-        // 不允许在事务中执行的命令，先自动提交当前事务
-        commit(tx_id);
-        tx_id = NO_TX;
-    }
-    if (transaction_isolation_level_ == TransactionIsolationLevel::READ_UNCOMMITTED) {
-        tx_id = NO_TX;
-    }
-    return executeCommand(command, tx_id);
+    return response;
 }
 
 Response DKVServer::executeCommand(const Command& command, TransactionID tx_id) {
     if (!storage_engine_ || !command_handler_) {
         return Response(ResponseStatus::ERROR, "Storage engine or command handler not initialized");
     }
+
+    if (commandNotAllowedInTx(command.type) && tx_id != NO_TX) {
+        // 不允许在事务中执行的命令，先自动提交当前事务
+        Command commit_command(CommandType::EXEC, {});
+        Response commit_response = executeCommand(commit_command, tx_id);
+        if (commit_response.status != ResponseStatus::OK) {
+            DKV_LOG_ERROR("提交事务失败: ", commit_response.message);
+            return commit_response;
+        }
+        tx_id = NO_TX;
+    }
     
     // 检查是否是只读命令，用于内存管理和Raft集成
     bool isReadOnly = isReadOnlyCommand(command.type);
-    
-    // 如果启用了Raft，处理写命令的Raft集成
-    if (enable_raft_ && !isReadOnly) {
-        // 检查当前节点是否是领导者
-        if (!raft_->IsLeader()) {
-            // 获取当前节点认为的领导者ID
-            int leaderId = raft_->GetCurrentLeaderId();
-            if (leaderId == -1) {
-                // 没有已知的领导者，返回错误
-                return Response(ResponseStatus::ERROR, "No known leader, please try again later");
-            } else {
-                // 返回当前领导者信息，格式为"MOVED <leaderId>"
-                string leaderInfo = "MOVED " + to_string(leaderId);
-                return Response(ResponseStatus::ERROR, leaderInfo);
-            }
-        }
-        
-        // 当前节点是领导者，将命令提交到Raft
-        int index, term;
-        auto r = make_shared<Command>(command);
-        bool ok = raft_->StartCommand(r, index, term);
-        if (!ok) {
-            // 提交失败，可能是因为在提交过程中失去了领导者地位
-            return Response(ResponseStatus::ERROR, "Failed to commit command to Raft");
-        }
-        
-        // Raft会异步处理命令并应用到状态机，这里直接返回成功
-        // TODO: 等待命令被提交后再返回
-        return Response(ResponseStatus::OK, "OK");
-    }
     
     // 如果不是只读命令，且设置了最大内存限制，则检查内存使用情况
     if (!isReadOnly && max_memory_ > 0) {
@@ -636,12 +574,84 @@ Response DKVServer::executeCommand(const Command& command, TransactionID tx_id) 
             }
         }
     }
-    
+
+    // 如果启用了Raft，处理写命令的Raft集成
+    if (enable_raft_ && !isReadOnly) {
+        // 检查当前节点是否是领导者
+        if (!raft_->IsLeader()) {
+            // 获取当前节点认为的领导者ID
+            int leaderId = raft_->GetCurrentLeaderId();
+            if (leaderId == -1) {
+                // 没有已知的领导者，返回错误
+                return Response(ResponseStatus::ERROR, "No known leader, please try again later");
+            } else {
+                // 返回当前领导者信息，格式为"MOVED <leaderId>"
+                string leaderInfo = "MOVED " + to_string(leaderId);
+                return Response(ResponseStatus::ERROR, leaderInfo);
+            }
+        }
+        
+        // 当前节点是领导者，将命令提交到Raft
+        int index, term;
+        auto raft_cmd = make_shared<RaftCommand>(tx_id, command);
+        bool ok = raft_->StartCommand(raft_cmd, index, term);
+        if (!ok) {
+            // 提交失败，可能是因为在提交过程中失去了领导者地位
+            return Response(ResponseStatus::ERROR, "Failed to commit command to Raft");
+        }
+        
+        // 等待命令被提交和应用到状态机后再返回结果
+        Response response = raft_->waitForCommandResult(index, term, 5000);
+        return response;
+    }
+    // 直接操作本机数据
+    return doCommandNative(command, tx_id);
+}
+
+// 在本机执行指定Command
+Response DKVServer::doCommandNative(const Command& command, TransactionID tx_id) {
     recordCommandForAOF(tx_id, command, command_handler_, transaction_manager_);
     bool need_inc_dirty = false;
     Response response;
-    
     switch (command.type) {
+        case CommandType::MULTI:
+        {
+            if (tx_id != NO_TX) {
+                return Response(ResponseStatus::ERROR, "Transaction already started");
+            }
+            if (command.args.size() == 0) {
+                // 开启事务
+                tx_id = transaction_manager_->begin();
+            } else if (command.args.size() == 1) {
+                TransactionID spec_tx_id = stoi(command.args[0]);
+                if (!transaction_manager_->isActive(spec_tx_id)) {
+                    return Response(ResponseStatus::ERROR, "Invalid transaction ID");
+                }
+                tx_id = spec_tx_id;
+            } else {
+                return Response(ResponseStatus::ERROR, "Invalid transaction ID");
+            }
+            return Response(ResponseStatus::OK, to_string(tx_id));
+        }
+        case CommandType::EXEC:
+        {
+            if (tx_id == NO_TX) {
+                return Response(ResponseStatus::ERROR, "Transaction not started");
+            }
+            auto commands = transaction_manager_->getTransaction(tx_id).get_commands();
+            // 提交事务
+            transaction_manager_->commit(tx_id);
+            return Response(ResponseStatus::OK, "OK");
+        }
+        case CommandType::DISCARD:
+        {
+            if (tx_id == NO_TX) {
+                return Response(ResponseStatus::ERROR, "Transaction not started");
+            }
+            // 回滚事务
+            transaction_manager_->rollback(tx_id);
+            return Response(ResponseStatus::OK, "OK");
+        }
         case CommandType::SET:
             response = command_handler_->handleSetCommand(tx_id, command, need_inc_dirty);
             break;
@@ -840,7 +850,6 @@ Response DKVServer::executeCommand(const Command& command, TransactionID tx_id) 
     if (need_inc_dirty) {
         incDirty();
     }
-    
     return response;
 }
 

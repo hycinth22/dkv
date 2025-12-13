@@ -87,7 +87,7 @@ bool testRaftLogReplication() {
         // 提交命令
     Command command(CommandType::SET, {"test_key", "test_value"});
     int index, term;
-    bool result = raft.StartCommand(command, index, term);
+    bool result = raft.StartCommand(RaftCommand(0, command), index, term);
         ASSERT_TRUE(result);
         ASSERT_GT(index, 0);
         ASSERT_GT(term, 0);
@@ -159,7 +159,7 @@ bool testRaftStateMachineManager() {
 
     // 测试DoOp方法（需要CommandHandler，这里只测试基本功能）
     Command command(CommandType::SET, {"test_key", "test_value"});
-    Response result = sm.DoOp(command);
+    Response result = sm.DoOp(RaftCommand(0, command));
 
     // 测试快照创建
     vector<char> snapshot = sm.Snapshot();
@@ -196,7 +196,7 @@ bool testRaftAppendEntriesValidation() {
         auto cmd = make_shared<Command>();
         cmd->type = CommandType::SET;
         cmd->args = {"test_key", "test_value"};
-        entry.command = cmd;
+        entry.command = make_shared<RaftCommand>(0, *cmd);
         request.entries.push_back(entry);
         
         AppendEntriesResponse response = raft.OnAppendEntries(request);
@@ -219,7 +219,7 @@ bool testRaftAppendEntriesValidation() {
         auto cmd = make_shared<Command>();
         cmd->type = CommandType::SET;
         cmd->args = {"test_key", "test_value"};
-        entry.command = cmd;
+        entry.command = make_shared<RaftCommand>(0, *cmd);
         request.entries.push_back(entry);
         
         AppendEntriesResponse response = raft.OnAppendEntries(request);
@@ -242,14 +242,14 @@ bool testRaftAppendEntriesValidation() {
         auto cmd1 = make_shared<Command>();
         cmd1->type = CommandType::SET;
         cmd1->args = {"test_key1", "test_value1"};
-        entry1.command = cmd1;
+        entry1.command = make_shared<RaftCommand>(0, *cmd1);
         
         entry2.term = 1;
         entry2.index = 3; // 应该是2
         auto cmd2 = make_shared<Command>();
         cmd2->type = CommandType::SET;
         cmd2->args = {"test_key2", "test_value2"};
-        entry2.command = cmd2;
+        entry2.command = make_shared<RaftCommand>(0, *cmd2);
         
         request.entries.push_back(entry1);
         request.entries.push_back(entry2);
@@ -274,7 +274,7 @@ bool testRaftAppendEntriesValidation() {
         auto cmd = make_shared<Command>();
         cmd->type = CommandType::SET;
         cmd->args = {"test_key", "test_value"};
-        entry.command = cmd;
+        entry.command = make_shared<RaftCommand>(0, *cmd);
         request.entries.push_back(entry);
         
         AppendEntriesResponse response = raft.OnAppendEntries(request);
@@ -336,7 +336,7 @@ bool testRaftContinuousCommands() {
         for (int i = 0; i < 3; i++) {
             Command command(CommandType::SET, {"key" + to_string(i), "value" + to_string(i)});
             int index, term;
-            bool result = raft.StartCommand(command, index, term);
+            bool result = raft.StartCommand(make_shared<RaftCommand>(0, command), index, term);
             ASSERT_TRUE(result);
             ASSERT_GT(index, 0);
             ASSERT_GT(term, 0);

@@ -595,14 +595,19 @@ AppendEntriesRequest RaftTcpNetwork::DeserializeAppendEntries(const std::vector<
         entry.index = ntohl(entryIndex);
         offset += sizeof(entryIndex);
         
-        // 反序列化Command对象
-        auto cmd = std::make_shared<Command>();
+        // 反序列化RaftCommand对象
+        TransactionID cmdTxId = 0;
+        memcpy(&cmdTxId, data.data() + offset, sizeof(cmdTxId));
+        cmdTxId = ntohl(cmdTxId);
+        offset += sizeof(cmdTxId);
         if (offset < data.size()) {
             std::vector<char> cmd_data(data.begin() + offset, data.end());
-            if (cmd->deserialize(cmd_data)) {
-                entry.command = cmd;
+            Command db_cmd;
+            if (db_cmd.deserialize(cmd_data)) {
+                auto raft_cmd = std::make_shared<RaftCommand>(cmdTxId, db_cmd);
+                entry.command = raft_cmd;
                 // 计算命令的序列化大小
-                offset += cmd->PersistBytes();
+                offset += db_cmd.PersistBytes();
             }
         }
         
@@ -1004,7 +1009,11 @@ std::vector<char> RaftTcpNetwork::SerializeAppendEntries(const AppendEntriesRequ
         data.insert(data.end(), (char*)&entryIndex, (char*)&entryIndex + sizeof(entryIndex));
         
         // 序列化Command对象
-        entry.command->serialize(data);
+        // cmdTxId
+        TransactionID cmdTxId = htonl(entry.command->tx_id);
+        data.insert(data.end(), (char*)&cmdTxId, (char*)&cmdTxId + sizeof(cmdTxId));
+
+        entry.command->db_command.serialize(data);
     }
     
     return data;
