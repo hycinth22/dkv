@@ -19,7 +19,7 @@ TransactionID TransactionManager::begin() {
     TransactionID txid = nextTransactionId();
     // activate the transaction
     lock_guard<mutex> lock(active_transactions_mutex_);
-    Transaction new_tx(txid);
+    Transaction new_tx(txid, createReadView(txid));
     active_transactions_.insert({txid, new_tx});
     return txid;
 }
@@ -89,5 +89,29 @@ const Transaction& TransactionManager::getTransaction(TransactionID transaction_
 Transaction& TransactionManager::getTransactionMut(TransactionID transaction_id) {
     return getTransactionImpl(*this, transaction_id);
 }
+
+ReadView TransactionManager::getReadView(TransactionID transaction_id) const {
+    if (isolation_level_ == TransactionIsolationLevel::READ_COMMITTED) {
+        return createReadView(transaction_id);
+    } else if (isolation_level_ == TransactionIsolationLevel::READ_UNCOMMITTED) {
+        return getTransaction(transaction_id).get_read_view();
+    }
+    exit(1);
+}
+
+ReadView TransactionManager::createReadView(TransactionID transaction_id) const {
+    ReadView read_view;
+    read_view.creator = transaction_id;
+    const auto& actives = getActiveTransactions();
+    const auto& rolledback = getRolledbackTransactions();
+    read_view.actives.reserve(actives.size() + rolledback.size());
+    read_view.actives.insert(actives.end(), actives.begin(), actives.end());
+    read_view.actives.insert(actives.end(), rolledback.begin(), rolledback.end());
+    auto pmin = min_element(actives.begin(), actives.end());
+    read_view.low = (pmin != read_view.actives.end() ? *pmin : 0);
+    read_view.high = peekNextTransactionID();
+    return read_view;
+}
+
 
 } // namespace dkv

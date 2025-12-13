@@ -13,13 +13,6 @@ namespace dkv {
 class StorageEngine;
 class InnerStorage;
 
-struct ReadView {
-    TransactionID creator;
-    TransactionID low, high;
-    std::vector<TransactionID> actives;
-    bool isVisible(TransactionID tx_id) const;
-};
-
 // MVCC类，提供多版本并发控制
 class MVCC {
 private:
@@ -47,9 +40,6 @@ public:
 
     // 删除键，并记录到UNDOLOG
     bool del(TransactionID tx_id, const Key& key);
-
-    // 创建ReadView，用于实现可重复读隔离级别
-    ReadView createReadView(TransactionID tx_id, TransactionManager& txm) const;
 };
 
 } // namespace dkv

@@ -22,7 +22,7 @@ bool testMVCCGetAndSet() {
     TransactionID tx_id2 = tx_manager.begin();
 
     // 创建ReadView
-    ReadView read_view = mvcc.createReadView(tx_id1, tx_manager);
+    ReadView read_view = tx_manager.createReadView(tx_id1);
 
     // 创建数据项
     auto item = std::make_unique<StringItem>("initial_value");
@@ -76,7 +76,7 @@ bool testMVCCDelete() {
     mvcc.set(tx_id1, "delete_key", std::move(item));
     
     // 创建ReadView
-    ReadView read_view = mvcc.createReadView(tx_id2, tx_manager);
+    ReadView read_view = tx_manager.createReadView(tx_id2);
 
     // 删除键
     bool del_result = mvcc.del(tx_id1, "delete_key");
@@ -113,7 +113,7 @@ bool testMVCCReadViewVisibility() {
     clog << "tx_id4: " << tx_id4 << endl;
 
     // 创建ReadView
-    ReadView read_view = mvcc.createReadView(tx_id1, tx_manager);
+    ReadView read_view = tx_manager.createReadView(tx_id1);
     clog << "read_view.low: " << read_view.low << endl;
     clog << "read_view.high: " << read_view.high << endl;
     clog << "active_transactions: " << endl;
@@ -168,8 +168,8 @@ bool testMVCCUndoLog() {
     mvcc.set(tx_id2, "undo_key", std::move(item2));
     
     // 创建两个不同的ReadView
-    ReadView read_view1 = mvcc.createReadView(tx_id1, tx_manager);
-    ReadView read_view2 = mvcc.createReadView(tx_id2, tx_manager);
+    ReadView read_view1 = tx_manager.createReadView(tx_id1);
+    ReadView read_view2 = tx_manager.createReadView(tx_id2);
     
     // 第一个ReadView应该看到第一个版本
     DataItem* read_item1 = mvcc.get(read_view1, "undo_key");

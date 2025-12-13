@@ -3,11 +3,12 @@
 
 #include "dkv_core.hpp"
 #include "dkv_transaction.hpp"
+#include "dkv_mvcc.hpp"
 #include <vector>
 #include <unordered_map>
 #include <mutex>
 #include <atomic>
-
+#include <algorithm>
 namespace dkv {
 
 class StorageEngine;
@@ -42,6 +43,11 @@ public:
     TransactionID peekNextTransactionID() const {
         return transaction_id_generator_.load();
     }
+
+    // 获取事务的读取视图
+    ReadView getReadView(TransactionID transaction_id) const;
+
+    ReadView createReadView(TransactionID transaction_id) const;
 private:
     StorageEngine* storage_engine_;              // 存储引擎指针
 

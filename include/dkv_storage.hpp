@@ -165,6 +165,7 @@ private:
     std::unique_ptr<DataItem> createBitmapItem(Timestamp expire_time);
     std::unique_ptr<DataItem> createHyperLogLogItem();
     std::unique_ptr<DataItem> createHyperLogLogItem(Timestamp expire_time);
+    ReadView getReadView(TransactionID tx_id) const;
 };
 
 // 数据项工厂

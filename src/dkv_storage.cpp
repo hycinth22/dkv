@@ -15,6 +15,10 @@ StorageEngine::StorageEngine(TransactionIsolationLevel tx_isolation_level)
     transaction_manager_ = new TransactionManager(this, tx_isolation_level);
 }
 
+ReadView StorageEngine::getReadView(TransactionID tx_id) const {
+    return transaction_manager_->getReadView(tx_id);
+}
+
 // StorageEngine 实现
 bool StorageEngine::set(TransactionID tx_id, const Key& key, const Value& value) {
     auto item = createStringItem(value);
@@ -28,7 +32,7 @@ bool StorageEngine::set(TransactionID tx_id, const Key& key, const Value& value,
 }
 
 std::string StorageEngine::get(TransactionID tx_id, const Key& key) {
-    auto item = inner_storage_.get(key);
+    auto item = inner_storage_.get(key, getReadView(tx_id));
     if (!item || item->isExpired()) {
         return "";
     }
@@ -48,7 +52,7 @@ bool StorageEngine::del(TransactionID tx_id, const Key& key) {
 }
 
 bool StorageEngine::exists(TransactionID tx_id, const Key& key) {
-    auto item = inner_storage_.get(key);
+    auto item = inner_storage_.get(key, getReadView(tx_id));
     if (!item || item->isExpired()) {
         return false;
     }
@@ -60,7 +64,7 @@ bool StorageEngine::exists(TransactionID tx_id, const Key& key) {
 }
 
 bool StorageEngine::expire(TransactionID tx_id, const Key& key, int64_t seconds) {
-    auto item = inner_storage_.get(key);
+    auto item = inner_storage_.get(key, getReadView(tx_id));
     if (!item || item->isExpired()) {
         return false;
     }
@@ -71,7 +75,7 @@ bool StorageEngine::expire(TransactionID tx_id, const Key& key, int64_t seconds)
 }
 
 int64_t StorageEngine::ttl(TransactionID tx_id, const Key& key) {
-    auto item = inner_storage_.get(key);
+    auto item = inner_storage_.get(key, getReadView(tx_id));
     if (!item || item->isExpired()) {
         return -2; // 键不存在
     }
@@ -87,7 +91,7 @@ int64_t StorageEngine::ttl(TransactionID tx_id, const Key& key) {
 }
 
 int64_t StorageEngine::incr(TransactionID tx_id, const Key& key) {
-    auto item = inner_storage_.get(key);
+    auto item = inner_storage_.get(key, getReadView(tx_id));
     if (!item || item->isExpired()) {
         // 键不存在，创建新的数值项
         auto new_item = createStringItem("1");
@@ -112,7 +116,7 @@ int64_t StorageEngine::incr(TransactionID tx_id, const Key& key) {
 }
 
 int64_t StorageEngine::decr(TransactionID tx_id, const Key& key) {
-    auto item = inner_storage_.get(key);
+    auto item = inner_storage_.get(key, getReadView(tx_id));
     if (!item || item->isExpired()) {
         // 键不存在，创建新的数值项
         auto new_item = createStringItem("-1");
@@ -717,7 +721,7 @@ size_t StorageEngine::scard(TransactionID tx_id, const Key& key) {
 }
 
 DataItem* StorageEngine::getDataItem(TransactionID tx_id, const Key& key) {
-    DataItem* item = inner_storage_.get(key);
+    DataItem* item = inner_storage_.get(key, getReadView(tx_id));
     if (!item || item->isExpired()) {
         return nullptr;
     }

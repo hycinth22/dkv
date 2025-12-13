@@ -64,6 +64,7 @@ private:
     std::unique_ptr<TransactionManager> transaction_manager_; // 事务管理器
     mutable std::shared_mutex transaction_mutex_; // 事务锁
     std::unordered_map<int, uint64_t> client_transaction_ids_; // 客户端事务ID映射
+    mutable std::mutex serializable_mutex_; // 可序列化锁
     
     // RAFT配置
     bool enable_raft_;             // 是否启用RAFT

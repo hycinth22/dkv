@@ -9,6 +9,7 @@
 #include <fstream>
 #include <sstream>
 #include <chrono>
+#include <mutex>
 using namespace std;
 
 namespace dkv {
@@ -506,6 +507,10 @@ bool DKVServer::initialize() {
 }
 
 Response DKVServer::executeCommand(int client_fd, const Command& command) {
+    unique_lock<mutex> serializable_lock(serializable_mutex_, defer_lock);
+    if (transaction_isolation_level_ == TransactionIsolationLevel::SERIALIZABLE) {
+        serializable_lock.lock();
+    }
     int tx_id = -1;
     {
         shared_lock<shared_mutex> readlock_client_transaction_ids_(transaction_mutex_);
@@ -560,6 +565,9 @@ Response DKVServer::executeCommand(int client_fd, const Command& command) {
     if (commandNotAllowedInTx(command.type) && tx_id != NO_TX) {
         // 不允许在事务中执行的命令，先自动提交当前事务
         commit(tx_id);
+        tx_id = NO_TX;
+    }
+    if (transaction_isolation_level_ == TransactionIsolationLevel::READ_UNCOMMITTED) {
         tx_id = NO_TX;
     }
     return executeCommand(command, tx_id);

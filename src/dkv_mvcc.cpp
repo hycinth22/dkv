@@ -4,7 +4,6 @@
 #include <vector>
 #include <memory>
 #include <atomic>
-#include <algorithm>
 #include <cassert>
 using namespace std;
 
@@ -94,21 +93,6 @@ bool MVCC::del(TransactionID tx_id, const Key& key) {
     virtual_item->setUndoLog(move(new_undo_log));
     entry = move(virtual_item);
     return true;
-}
-
-// 创建ReadView，用于实现可重复读隔离级别
-ReadView MVCC::createReadView(TransactionID tx_id, TransactionManager& txm) const {
-    ReadView read_view;
-    read_view.creator = tx_id;
-    const auto& actives = txm.getActiveTransactions();
-    const auto& rolledback = txm.getRolledbackTransactions();
-    read_view.actives.reserve(actives.size() + rolledback.size());
-    read_view.actives.insert(read_view.actives.end(), actives.begin(), actives.end());
-    read_view.actives.insert(read_view.actives.end(), rolledback.begin(), rolledback.end());
-    auto pmin = min_element(read_view.actives.begin(), read_view.actives.end());
-    read_view.low = (pmin != read_view.actives.end() ? *pmin : 0);
-    read_view.high = txm.peekNextTransactionID();
-    return read_view;
 }
 
 // 检查数据项对指定ReadView是否可见
