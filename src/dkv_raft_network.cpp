@@ -11,16 +11,418 @@
 namespace dkv {
 
 // RAFT TCP网络实现构造函数
-RaftTcpNetwork::RaftTcpNetwork(const std::vector<std::string>& peers) : peers_(peers) {
+RaftTcpNetwork::RaftTcpNetwork(int me, const std::vector<std::string>& peers) : me_(me), peers_(peers) {
+    // 启动监听线程
+    StartListener();
 }
 
 // RAFT TCP网络实现析构函数
 RaftTcpNetwork::~RaftTcpNetwork() {
+    // 停止监听线程
+    StopListener();
+    
     // 关闭所有连接
     for (const auto& conn : connections_) {
         close(conn.second);
     }
     connections_.clear();
+}
+
+// 启动网络监听
+void RaftTcpNetwork::StartListener() {
+    if (listener_running_) {
+        return;
+    }
+    
+    listener_running_ = true;
+    listener_thread_ = std::thread(&RaftTcpNetwork::Listen, this);
+}
+
+// 停止网络监听
+void RaftTcpNetwork::StopListener() {
+    if (!listener_running_) {
+        return;
+    }
+    
+    listener_running_ = false;
+    
+    // 关闭监听套接字，唤醒监听线程
+    if (listen_fd_ != -1) {
+        close(listen_fd_);
+        listen_fd_ = -1;
+    }
+    
+    // 等待监听线程结束
+    if (listener_thread_.joinable()) {
+        listener_thread_.join();
+    }
+}
+
+// 监听连接
+void RaftTcpNetwork::Listen() {
+    // 从peers_中获取当前节点的地址和端口
+    if (me_ >= (int)peers_.size()) {
+        DKV_LOG_ERROR("无效的节点ID");
+        return;
+    }
+    
+    const std::string& self_addr = peers_[me_];
+    size_t colon_pos = self_addr.find(':');
+    if (colon_pos == std::string::npos) {
+        DKV_LOG_ERROR("无效的节点地址格式: ", self_addr);
+        return;
+    }
+    
+    std::string ip = self_addr.substr(0, colon_pos);
+    int port = std::stoi(self_addr.substr(colon_pos + 1));
+    
+    // 创建监听套接字
+    listen_fd_ = socket(AF_INET, SOCK_STREAM, 0);
+    if (listen_fd_ < 0) {
+        DKV_LOG_ERROR("创建监听套接字失败: ", strerror(errno));
+        return;
+    }
+    
+    // 设置套接字选项，允许地址重用
+    int optval = 1;
+    if (setsockopt(listen_fd_, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval)) < 0) {
+        DKV_LOG_ERROR("设置套接字选项失败: ", strerror(errno));
+        close(listen_fd_);
+        listen_fd_ = -1;
+        return;
+    }
+    
+    // 绑定地址
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    
+    if (inet_pton(AF_INET, ip.c_str(), &addr.sin_addr) <= 0) {
+        DKV_LOG_ERROR("无效的IP地址: ", ip);
+        close(listen_fd_);
+        listen_fd_ = -1;
+        return;
+    }
+    
+    if (bind(listen_fd_, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        DKV_LOG_ERROR("绑定地址失败: ", strerror(errno));
+        close(listen_fd_);
+        listen_fd_ = -1;
+        return;
+    }
+    
+    // 开始监听
+    if (listen(listen_fd_, 10) < 0) {
+        DKV_LOG_ERROR("开始监听失败: ", strerror(errno));
+        close(listen_fd_);
+        listen_fd_ = -1;
+        return;
+    }
+    
+    DKV_LOG_INFO("Raft网络监听已启动，地址: ", self_addr);
+    
+    // 接受连接
+    while (listener_running_) {
+        struct sockaddr_in client_addr;
+        socklen_t client_len = sizeof(client_addr);
+        int client_fd = accept(listen_fd_, (struct sockaddr*)&client_addr, &client_len);
+        
+        if (client_fd < 0) {
+            if (listener_running_) {
+                DKV_LOG_ERROR("接受连接失败: ", strerror(errno));
+            }
+            continue;
+        }
+        
+        // 创建线程处理连接
+        std::thread(&RaftTcpNetwork::HandleConnection, this, client_fd).detach();
+    }
+    
+    // 关闭监听套接字
+    close(listen_fd_);
+    listen_fd_ = -1;
+}
+
+// 处理连接
+void RaftTcpNetwork::HandleConnection(int client_fd) {
+    try {
+        // 接收请求数据
+        std::vector<char> request_data = ReceiveData(client_fd);
+        if (request_data.empty()) {
+            close(client_fd);
+            return;
+        }
+        
+        // 解析请求类型（第一个字节）
+        if (request_data.empty()) {
+            close(client_fd);
+            return;
+        }
+        
+        char request_type = request_data[0];
+        std::vector<char> payload_data(request_data.begin() + 1, request_data.end());
+        
+        // 获取Raft实例
+        auto raft = raft_.lock();
+        if (!raft) {
+            DKV_LOG_ERROR("Raft实例已失效");
+            close(client_fd);
+            return;
+        }
+        
+        // 根据请求类型处理
+        std::vector<char> response_data;
+        switch (request_type) {
+            case 'A': { // AppendEntries请求
+                AppendEntriesRequest request = DeserializeAppendEntries(payload_data);
+                AppendEntriesResponse response = raft->OnAppendEntries(request);
+                response_data = SerializeAppendEntriesResponse(response);
+                break;
+            }
+            case 'V': { // RequestVote请求
+                RequestVoteRequest request = DeserializeRequestVote(payload_data);
+                RequestVoteResponse response = raft->OnRequestVote(request);
+                response_data = SerializeRequestVoteResponse(response);
+                break;
+            }
+            case 'S': { // InstallSnapshot请求
+                InstallSnapshotRequest request = DeserializeInstallSnapshot(payload_data);
+                InstallSnapshotResponse response = raft->OnInstallSnapshot(request);
+                response_data = SerializeInstallSnapshotResponse(response);
+                break;
+            }
+            default:
+                DKV_LOG_ERROR("未知的请求类型: ", request_type);
+                close(client_fd);
+                return;
+        }
+        
+        // 发送响应
+        SendData(client_fd, response_data);
+        close(client_fd);
+    } catch (const std::exception& e) {
+        DKV_LOG_ERROR("处理连接时发生异常: ", e.what());
+        close(client_fd);
+    }
+}
+
+// 反序列化AppendEntries请求
+AppendEntriesRequest RaftTcpNetwork::DeserializeAppendEntries(const std::vector<char>& data) {
+    AppendEntriesRequest request;
+    
+    if (data.size() < 20) { // 5个uint32_t字段
+        return request;
+    }
+    
+    size_t offset = 0;
+    
+    // 反序列化term
+    uint32_t term = 0;
+    memcpy(&term, data.data() + offset, sizeof(term));
+    request.term = ntohl(term);
+    offset += sizeof(term);
+    
+    // 反序列化leaderId
+    uint32_t leaderId = 0;
+    memcpy(&leaderId, data.data() + offset, sizeof(leaderId));
+    request.leaderId = ntohl(leaderId);
+    offset += sizeof(leaderId);
+    
+    // 反序列化prevLogIndex
+    uint32_t prevLogIndex = 0;
+    memcpy(&prevLogIndex, data.data() + offset, sizeof(prevLogIndex));
+    request.prevLogIndex = ntohl(prevLogIndex);
+    offset += sizeof(prevLogIndex);
+    
+    // 反序列化prevLogTerm
+    uint32_t prevLogTerm = 0;
+    memcpy(&prevLogTerm, data.data() + offset, sizeof(prevLogTerm));
+    request.prevLogTerm = ntohl(prevLogTerm);
+    offset += sizeof(prevLogTerm);
+    
+    // 反序列化leaderCommit
+    uint32_t leaderCommit = 0;
+    memcpy(&leaderCommit, data.data() + offset, sizeof(leaderCommit));
+    request.leaderCommit = ntohl(leaderCommit);
+    offset += sizeof(leaderCommit);
+    
+    // 反序列化日志条目数量
+    uint32_t entriesSize = 0;
+    memcpy(&entriesSize, data.data() + offset, sizeof(entriesSize));
+    entriesSize = ntohl(entriesSize);
+    offset += sizeof(entriesSize);
+    
+    // 反序列化每个日志条目
+    for (uint32_t i = 0; i < entriesSize && offset < data.size(); i++) {
+        RaftLogEntry entry;
+        
+        // entry.term
+        uint32_t entryTerm = 0;
+        memcpy(&entryTerm, data.data() + offset, sizeof(entryTerm));
+        entry.term = ntohl(entryTerm);
+        offset += sizeof(entryTerm);
+        
+        // entry.index
+        uint32_t entryIndex = 0;
+        memcpy(&entryIndex, data.data() + offset, sizeof(entryIndex));
+        entry.index = ntohl(entryIndex);
+        offset += sizeof(entryIndex);
+        
+        // 反序列化Command对象
+        auto cmd = std::make_shared<Command>();
+        if (offset < data.size()) {
+            std::vector<char> cmd_data(data.begin() + offset, data.end());
+            if (cmd->deserialize(cmd_data)) {
+                entry.command = cmd;
+                // 计算命令的序列化大小
+                offset += cmd->PersistBytes();
+            }
+        }
+        
+        request.entries.push_back(entry);
+    }
+    
+    return request;
+}
+
+// 反序列化RequestVote请求
+RequestVoteRequest RaftTcpNetwork::DeserializeRequestVote(const std::vector<char>& data) {
+    RequestVoteRequest request;
+    
+    if (data.size() < 16) { // 4个uint32_t字段
+        return request;
+    }
+    
+    size_t offset = 0;
+    
+    // 反序列化term
+    uint32_t term = 0;
+    memcpy(&term, data.data() + offset, sizeof(term));
+    request.term = ntohl(term);
+    offset += sizeof(term);
+    
+    // 反序列化candidateId
+    uint32_t candidateId = 0;
+    memcpy(&candidateId, data.data() + offset, sizeof(candidateId));
+    request.candidateId = ntohl(candidateId);
+    offset += sizeof(candidateId);
+    
+    // 反序列化lastLogIndex
+    uint32_t lastLogIndex = 0;
+    memcpy(&lastLogIndex, data.data() + offset, sizeof(lastLogIndex));
+    request.lastLogIndex = ntohl(lastLogIndex);
+    offset += sizeof(lastLogIndex);
+    
+    // 反序列化lastLogTerm
+    uint32_t lastLogTerm = 0;
+    memcpy(&lastLogTerm, data.data() + offset, sizeof(lastLogTerm));
+    request.lastLogTerm = ntohl(lastLogTerm);
+    offset += sizeof(lastLogTerm);
+    
+    return request;
+}
+
+// 反序列化InstallSnapshot请求
+InstallSnapshotRequest RaftTcpNetwork::DeserializeInstallSnapshot(const std::vector<char>& data) {
+    InstallSnapshotRequest request;
+    
+    if (data.size() < 24) { // 6个uint32_t字段
+        return request;
+    }
+    
+    size_t offset = 0;
+    
+    // 反序列化term
+    uint32_t term = 0;
+    memcpy(&term, data.data() + offset, sizeof(term));
+    request.term = ntohl(term);
+    offset += sizeof(term);
+    
+    // 反序列化leaderId
+    uint32_t leaderId = 0;
+    memcpy(&leaderId, data.data() + offset, sizeof(leaderId));
+    request.leaderId = ntohl(leaderId);
+    offset += sizeof(leaderId);
+    
+    // 反序列化lastIncludedIndex
+    uint32_t lastIncludedIndex = 0;
+    memcpy(&lastIncludedIndex, data.data() + offset, sizeof(lastIncludedIndex));
+    request.lastIncludedIndex = ntohl(lastIncludedIndex);
+    offset += sizeof(lastIncludedIndex);
+    
+    // 反序列化lastIncludedTerm
+    uint32_t lastIncludedTerm = 0;
+    memcpy(&lastIncludedTerm, data.data() + offset, sizeof(lastIncludedTerm));
+    request.lastIncludedTerm = ntohl(lastIncludedTerm);
+    offset += sizeof(lastIncludedTerm);
+    
+    // 反序列化leaderCommit
+    uint32_t leaderCommit = 0;
+    memcpy(&leaderCommit, data.data() + offset, sizeof(leaderCommit));
+    request.leaderCommit = ntohl(leaderCommit);
+    offset += sizeof(leaderCommit);
+    
+    // 反序列化快照数据
+    uint32_t snapshotSize = 0;
+    memcpy(&snapshotSize, data.data() + offset, sizeof(snapshotSize));
+    snapshotSize = ntohl(snapshotSize);
+    offset += sizeof(snapshotSize);
+    
+    if (offset + snapshotSize <= data.size()) {
+        request.snapshot.assign(data.begin() + offset, data.begin() + offset + snapshotSize);
+    }
+    
+    return request;
+}
+
+// 序列化AppendEntries响应
+std::vector<char> RaftTcpNetwork::SerializeAppendEntriesResponse(const AppendEntriesResponse& response) {
+    std::vector<char> data;
+    
+    // 序列化term
+    uint32_t term = htonl(response.term);
+    data.insert(data.end(), (char*)&term, (char*)&term + sizeof(term));
+    
+    // 序列化success
+    uint32_t success = htonl(response.success ? 1 : 0);
+    data.insert(data.end(), (char*)&success, (char*)&success + sizeof(success));
+    
+    // 序列化matchIndex
+    uint32_t matchIndex = htonl(response.matchIndex);
+    data.insert(data.end(), (char*)&matchIndex, (char*)&matchIndex + sizeof(matchIndex));
+    
+    return data;
+}
+
+// 序列化RequestVote响应
+std::vector<char> RaftTcpNetwork::SerializeRequestVoteResponse(const RequestVoteResponse& response) {
+    std::vector<char> data;
+    
+    // 序列化term
+    uint32_t term = htonl(response.term);
+    data.insert(data.end(), (char*)&term, (char*)&term + sizeof(term));
+    
+    // 序列化voteGranted
+    uint32_t voteGranted = htonl(response.voteGranted ? 1 : 0);
+    data.insert(data.end(), (char*)&voteGranted, (char*)&voteGranted + sizeof(voteGranted));
+    
+    return data;
+}
+
+// 序列化InstallSnapshot响应
+std::vector<char> RaftTcpNetwork::SerializeInstallSnapshotResponse(const InstallSnapshotResponse& response) {
+    std::vector<char> data;
+    
+    // 序列化term
+    uint32_t term = htonl(response.term);
+    data.insert(data.end(), (char*)&term, (char*)&term + sizeof(term));
+    
+    // 序列化success
+    uint32_t success = htonl(response.success ? 1 : 0);
+    data.insert(data.end(), (char*)&success, (char*)&success + sizeof(success));
+    
+    return data;
 }
 
 // 发送AppendEntries请求
@@ -30,7 +432,12 @@ AppendEntriesResponse RaftTcpNetwork::SendAppendEntries(int serverId, const Appe
     // 1. 序列化请求
     std::vector<char> requestData = SerializeAppendEntries(request);
     
-    // 2. 建立连接
+    // 2. 添加请求类型标识 'A' 表示AppendEntries
+    std::vector<char> fullRequestData;
+    fullRequestData.push_back('A');
+    fullRequestData.insert(fullRequestData.end(), requestData.begin(), requestData.end());
+    
+    // 3. 建立连接
     int sockfd = EstablishConnection(serverId);
     if (sockfd < 0) {
         AppendEntriesResponse response;
@@ -40,8 +447,8 @@ AppendEntriesResponse RaftTcpNetwork::SendAppendEntries(int serverId, const Appe
         return response;
     }
     
-    // 3. 发送请求
-    if (!SendData(sockfd, requestData)) {
+    // 4. 发送请求
+    if (!SendData(sockfd, fullRequestData)) {
         close(sockfd);
         AppendEntriesResponse response;
         response.term = 0;
@@ -69,7 +476,12 @@ RequestVoteResponse RaftTcpNetwork::SendRequestVote(int serverId, const RequestV
     // 1. 序列化请求
     std::vector<char> requestData = SerializeRequestVote(request);
     
-    // 2. 建立连接
+    // 2. 添加请求类型标识 'V' 表示RequestVote
+    std::vector<char> fullRequestData;
+    fullRequestData.push_back('V');
+    fullRequestData.insert(fullRequestData.end(), requestData.begin(), requestData.end());
+    
+    // 3. 建立连接
     int sockfd = EstablishConnection(serverId);
     if (sockfd < 0) {
         RequestVoteResponse response;
@@ -78,8 +490,8 @@ RequestVoteResponse RaftTcpNetwork::SendRequestVote(int serverId, const RequestV
         return response;
     }
     
-    // 3. 发送请求
-    if (!SendData(sockfd, requestData)) {
+    // 4. 发送请求
+    if (!SendData(sockfd, fullRequestData)) {
         close(sockfd);
         RequestVoteResponse response;
         response.term = 0;
@@ -341,7 +753,12 @@ InstallSnapshotResponse RaftTcpNetwork::SendInstallSnapshot(int serverId, const 
     // 1. 序列化请求
     std::vector<char> requestData = SerializeInstallSnapshot(request);
     
-    // 2. 建立连接
+    // 2. 添加请求类型标识 'S' 表示InstallSnapshot
+    std::vector<char> fullRequestData;
+    fullRequestData.push_back('S');
+    fullRequestData.insert(fullRequestData.end(), requestData.begin(), requestData.end());
+    
+    // 3. 建立连接
     int sockfd = EstablishConnection(serverId);
     if (sockfd < 0) {
         InstallSnapshotResponse response;
@@ -350,8 +767,8 @@ InstallSnapshotResponse RaftTcpNetwork::SendInstallSnapshot(int serverId, const 
         return response;
     }
     
-    // 3. 发送请求
-    if (!SendData(sockfd, requestData)) {
+    // 4. 发送请求
+    if (!SendData(sockfd, fullRequestData)) {
         close(sockfd);
         InstallSnapshotResponse response;
         response.term = 0;

@@ -484,10 +484,16 @@ bool DKVServer::initialize() {
         raft_persister_ = std::make_shared<RaftFilePersister>(raft_data_dir_);
         
         // 创建RAFT网络
-        raft_network_ = std::make_shared<RaftTcpNetwork>(raft_peers_);
+        raft_network_ = std::make_shared<RaftTcpNetwork>(raft_node_id_, raft_peers_);
         
         // 创建RAFT实例
         raft_ = std::make_shared<Raft>(raft_node_id_, raft_peers_, raft_persister_, raft_network_, raft_state_machine_);
+
+        // 设置RAFT实例到网络组件
+        auto tcp_network = std::dynamic_pointer_cast<RaftTcpNetwork>(raft_network_);
+        if (tcp_network) {
+            tcp_network->SetRaft(raft_);
+        }
 
         // 启动RAFT
         raft_->Start();

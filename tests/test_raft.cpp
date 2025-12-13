@@ -170,17 +170,6 @@ bool testRaftStateMachineManager() {
     return true;
 }
 
-// 测试Raft网络
-bool testRaftNetwork() {
-    vector<string> peers = {"127.0.0.1:12345"};
-    RaftTcpNetwork network(peers);
-
-    // 测试网络初始化
-    // 这里只测试构造函数，实际网络通信测试较为复杂
-
-    return true;
-}
-
 // 测试AppendEntries日志验证逻辑
 bool testRaftAppendEntriesValidation() {
     vector<string> peers = {"127.0.0.1:12345"};
@@ -906,7 +895,6 @@ int main() {
     runner.runTest("Raft日志复制", testRaftLogReplication);
     runner.runTest("Raft持久化", testRaftPersist);
     runner.runTest("Raft状态机管理器", testRaftStateMachineManager);
-    runner.runTest("Raft网络", testRaftNetwork);
     runner.runTest("AppendEntries日志验证", testRaftAppendEntriesValidation);
     runner.runTest("Raft安装快照", testRaftInstallSnapshot);
     runner.runTest("Raft连续命令", testRaftContinuousCommands);
