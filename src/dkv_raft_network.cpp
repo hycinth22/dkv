@@ -247,12 +247,8 @@ std::vector<char> RaftTcpNetwork::SerializeAppendEntries(const AppendEntriesRequ
         uint32_t entryIndex = htonl(entry.index);
         data.insert(data.end(), (char*)&entryIndex, (char*)&entryIndex + sizeof(entryIndex));
         
-        // entry.command.size()
-        uint32_t commandSize = htonl(entry.command.size());
-        data.insert(data.end(), (char*)&commandSize, (char*)&commandSize + sizeof(commandSize));
-        
-        // entry.command
-        data.insert(data.end(), entry.command.begin(), entry.command.end());
+        // 序列化Command对象
+        entry.command->serialize(data);
     }
     
     return data;

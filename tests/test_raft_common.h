@@ -1,5 +1,6 @@
 #pragma once
 
+#include "dkv_logger.hpp"
 #include "dkv_raft.h"
 #include "dkv_raft_network.h"
 #include "dkv_raft_statemachine.h"
@@ -111,7 +112,7 @@ public:
     }
     
     // 提交一个命令并等待至少n个服务器提交
-    int One(const vector<char>& cmd, int expectedServers, bool retry = true) {
+    int One(const Command& cmd, int expectedServers, bool retry = true) {
         auto start_time = chrono::steady_clock::now();
         int starts = 0;
         
@@ -226,12 +227,12 @@ public:
     }
 
     // 执行命令并返回结果
-    vector<char> DoOp(const vector<char>& command) override {
-        last_command_ = command;
-        
+    Response DoOp(const Command& command) override {
+        //DKV_LOG_INFOF("MockRaftStateMachine::DoOp: {}", command.desc());
+        //DKV_LOG_INFOF("MockRaftStateMachine::DoOp: counter_ = {}", counter_);
         // 处理计数器命令
-        if (!command.empty()) {
-            switch (command[0]) {
+        if (!command.args.empty()) {
+            switch (command.args[0][0]) {
                 case 'i': // increment
                     counter_++;
                     break;
@@ -243,8 +244,8 @@ public:
                     break;
             }
         }
-        
-        return std::vector<char>{'O', 'K'};
+        //DKV_LOG_INFOF("MockRaftStateMachine::DoOp: counter_ = {}", counter_);
+        return Response(ResponseStatus::OK, "", "OK");
     }
 
     // 创建快照
@@ -265,11 +266,6 @@ public:
             std::string counter_str = snapshot_str.substr(8);
             counter_ = std::stoi(counter_str);
         }
-    }
-
-    // 获取最后执行的命令
-    vector<char> GetLastCommand() const {
-        return last_command_;
     }
 
     // 获取快照调用次数
@@ -293,7 +289,6 @@ public:
     }
 
 private:
-    vector<char> last_command_;
     vector<char> last_snapshot_;
     int snapshot_calls_;
     int restore_calls_;

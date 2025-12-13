@@ -31,8 +31,12 @@ void RaftFilePersister::SaveLog(const std::vector<RaftLogEntry>& log) {
     std::ofstream file(logFilePath_);
     if (file.is_open()) {
         for (const auto& entry : log) {
-            file << entry.index << " " << entry.term << " " << entry.command.size() << " ";
-            file.write(entry.command.data(), entry.command.size());
+            if (!entry.command) {
+                continue;
+            }
+            // 保存索引、任期、命令
+            file << entry.index << " " << entry.term;
+            entry.command->write(file);
             file << std::endl;
         }
         file.close();
@@ -93,20 +97,17 @@ std::vector<RaftLogEntry> RaftFilePersister::ReadLog() {
         std::string line;
         while (getline(file, line)) {
             std::istringstream iss(line);
-            int index, term, size;
-            if (iss >> index >> term >> size) {
-                // 跳过空格
-                iss.ignore(1);
+            int index, term;
+            int commandType;
+            int argsCount;
+            
+            if (iss >> index >> term >> commandType >> argsCount) {
+                RaftLogEntry entry;
+                entry.index = index;
+                entry.term = term;
+                entry.command->read(iss);
                 
-                // 读取命令数据
-                std::vector<char> command(size);
-                if (iss.read(command.data(), size)) {
-                    RaftLogEntry entry;
-                    entry.index = index;
-                    entry.term = term;
-                    entry.command = std::move(command);
-                    log.push_back(entry);
-                }
+                log.push_back(entry);
             }
         }
         file.close();

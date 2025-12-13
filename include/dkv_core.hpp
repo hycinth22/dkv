@@ -9,7 +9,6 @@
 namespace dkv {
 
 // 基础类型定义
-// 基础类型定义
 using Key = std::string;
 using Value = std::string;
 using Timestamp = std::chrono::system_clock::time_point;
@@ -182,6 +181,18 @@ struct Command {
     
     Command() : type(CommandType::UNKNOWN) {}
     Command(CommandType t, const std::vector<std::string>& a) : type(t), args(a) {}
+
+    std::string desc() const;
+
+    void serialize(std::vector<char>& buffer) const;
+
+    bool deserialize(const std::vector<char>& buffer);
+
+    std::ostream& write(std::ostream& os) const;
+
+    std::istream& read(std::istream& is);
+
+    size_t PersistBytes() const;
 };
 
 // 响应结构

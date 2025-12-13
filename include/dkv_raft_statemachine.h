@@ -7,6 +7,8 @@
 
 namespace dkv {
 
+class DKVServer;
+
 // RAFT状态机管理器
 class RaftStateMachineManager : public RaftStateMachine {
 public:
@@ -14,7 +16,7 @@ public:
     RaftStateMachineManager();
     
     // 执行命令
-    std::vector<char> DoOp(const std::vector<char>& command) override;
+    Response DoOp(const Command& command) override;
     
     // 创建快照
     std::vector<char> Snapshot() override;
@@ -28,12 +30,18 @@ public:
     // 设置存储引擎
     void SetStorageEngine(StorageEngine* storageEngine);
     
+    // 设置DKV服务器
+    void SetDKVServer(DKVServer* server);
+    
 private:
     // 命令处理器指针
     void* commandHandler_;
     
     // 存储引擎指针
     StorageEngine* storageEngine_;
+    
+    // DKV服务器指针
+    DKVServer* dkvServer_;
     
     // 互斥锁
     mutable std::mutex mutex_;

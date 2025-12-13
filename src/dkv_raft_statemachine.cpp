@@ -2,6 +2,7 @@
 #include "dkv_command_handler.hpp"
 #include "dkv_resp.hpp"
 #include "dkv_logger.hpp"
+#include "dkv_server.hpp"
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -10,182 +11,37 @@
 namespace dkv {
 
 RaftStateMachineManager::RaftStateMachineManager()
-    : commandHandler_(nullptr), storageEngine_(nullptr) {
+    : commandHandler_(nullptr), storageEngine_(nullptr), dkvServer_(nullptr) {
 }
 
-std::vector<char> RaftStateMachineManager::DoOp(const std::vector<char>& command) {
+Response RaftStateMachineManager::DoOp(const Command& command) {
     std::lock_guard<std::mutex> lock(mutex_);
     
-    if (!commandHandler_) {
-        DKV_LOG_ERROR("CommandHandler未初始化");
-        return {};
+    if (!dkvServer_) {
+        DKV_LOG_ERROR("DKVServer未初始化");
+        return Response(ResponseStatus::ERROR, "DKVServer not initialized");
     }
     
     try {
-        // 将vector<char>转换为string
-        std::string cmd_str(command.begin(), command.end());
+        // 调用DKVServer::executeCommand执行命令
+        Response response = dkvServer_->executeCommand(command, NO_TX);
         
-        // 解析命令
-        size_t pos = 0;
-        Command cmd = RESPProtocol::parseCommand(cmd_str, pos);
+        DKV_LOG_DEBUGF("执行RAFT命令成功，命令类型: {}, 响应状态: {}", 
+                     static_cast<int>(command.type), static_cast<int>(response.status));
         
-        // 执行命令并获取结果
-        auto* handler = static_cast<CommandHandler*>(commandHandler_);
-        Response response;
-        bool need_inc_dirty = false;
-        
-        // 根据命令类型调用相应的处理函数
-        switch (cmd.type) {
-            case CommandType::SET:
-                response = handler->handleSetCommand(NO_TX, cmd, need_inc_dirty);
-                break;
-            case CommandType::GET:
-                response = handler->handleGetCommand(NO_TX, cmd);
-                break;
-            case CommandType::DEL:
-                response = handler->handleDelCommand(NO_TX, cmd, need_inc_dirty);
-                break;
-            case CommandType::EXISTS:
-                response = handler->handleExistsCommand(NO_TX, cmd);
-                break;
-            case CommandType::INCR:
-                response = handler->handleIncrCommand(NO_TX, cmd, need_inc_dirty);
-                break;
-            case CommandType::DECR:
-                response = handler->handleDecrCommand(NO_TX, cmd, need_inc_dirty);
-                break;
-            case CommandType::EXPIRE:
-                response = handler->handleExpireCommand(NO_TX, cmd, need_inc_dirty);
-                break;
-            case CommandType::TTL:
-                response = handler->handleTtlCommand(NO_TX, cmd);
-                break;
-            // 哈希命令
-            case CommandType::HSET:
-                response = handler->handleHSetCommand(NO_TX, cmd, need_inc_dirty);
-                break;
-            case CommandType::HGET:
-                response = handler->handleHGetCommand(NO_TX, cmd);
-                break;
-            case CommandType::HGETALL:
-                response = handler->handleHGetAllCommand(NO_TX, cmd);
-                break;
-            case CommandType::HDEL:
-                response = handler->handleHDeldCommand(NO_TX, cmd, need_inc_dirty);
-                break;
-            case CommandType::HEXISTS:
-                response = handler->handleHExistsCommand(NO_TX, cmd);
-                break;
-            // 列表命令
-            case CommandType::LPUSH:
-                response = handler->handleLPushCommand(NO_TX, cmd, need_inc_dirty);
-                break;
-            case CommandType::RPUSH:
-                response = handler->handleRPushCommand(NO_TX, cmd, need_inc_dirty);
-                break;
-            case CommandType::LPOP:
-                response = handler->handleLPopCommand(NO_TX, cmd, need_inc_dirty);
-                break;
-            case CommandType::RPOP:
-                response = handler->handleRPopCommand(NO_TX, cmd, need_inc_dirty);
-                break;
-            case CommandType::LLEN:
-                response = handler->handleLLenCommand(NO_TX, cmd);
-                break;
-            // 集合命令
-            case CommandType::SADD:
-                response = handler->handleSAddCommand(NO_TX, cmd, need_inc_dirty);
-                break;
-            case CommandType::SREM:
-                response = handler->handleSRemCommand(NO_TX, cmd, need_inc_dirty);
-                break;
-            case CommandType::SMEMBERS:
-                response = handler->handleSMembersCommand(NO_TX, cmd);
-                break;
-            case CommandType::SISMEMBER:
-                response = handler->handleSIsMemberCommand(NO_TX, cmd);
-                break;
-            case CommandType::SCARD:
-                response = handler->handleSCardCommand(NO_TX, cmd);
-                break;
-            // 有序集合命令
-            case CommandType::ZADD:
-                response = handler->handleZAddCommand(NO_TX, cmd, need_inc_dirty);
-                break;
-            case CommandType::ZREM:
-                response = handler->handleZRemCommand(NO_TX, cmd, need_inc_dirty);
-                break;
-            case CommandType::ZSCORE:
-                response = handler->handleZScoreCommand(NO_TX, cmd);
-                break;
-            case CommandType::ZISMEMBER:
-                response = handler->handleZIsMemberCommand(NO_TX, cmd);
-                break;
-            case CommandType::ZRANK:
-                response = handler->handleZRankCommand(NO_TX, cmd);
-                break;
-            case CommandType::ZREVRANK:
-                response = handler->handleZRevRankCommand(NO_TX, cmd);
-                break;
-            case CommandType::ZRANGE:
-                response = handler->handleZRangeCommand(NO_TX, cmd);
-                break;
-            case CommandType::ZREVRANGE:
-                response = handler->handleZRevRangeCommand(NO_TX, cmd);
-                break;
-            case CommandType::ZRANGEBYSCORE:
-                response = handler->handleZRangeByScoreCommand(NO_TX, cmd);
-                break;
-            case CommandType::ZREVRANGEBYSCORE:
-                response = handler->handleZRevRangeByScoreCommand(NO_TX, cmd);
-                break;
-            case CommandType::ZCOUNT:
-                response = handler->handleZCountCommand(NO_TX, cmd);
-                break;
-            case CommandType::ZCARD:
-                response = handler->handleZCardCommand(NO_TX, cmd);
-                break;
-            // 位图命令
-            case CommandType::SETBIT:
-                response = handler->handleSetBitCommand(NO_TX, cmd, need_inc_dirty);
-                break;
-            case CommandType::GETBIT:
-                response = handler->handleGetBitCommand(NO_TX, cmd);
-                break;
-            case CommandType::BITCOUNT:
-                response = handler->handleBitCountCommand(NO_TX, cmd);
-                break;
-            case CommandType::BITOP:
-                response = handler->handleBitOpCommand(NO_TX, cmd, need_inc_dirty);
-                break;
-            // HyperLogLog命令
-            case CommandType::PFADD:
-                response = handler->handlePFAddCommand(NO_TX, cmd, need_inc_dirty);
-                break;
-            case CommandType::PFCOUNT:
-                response = handler->handlePFCountCommand(NO_TX, cmd);
-                break;
-            case CommandType::PFMERGE:
-                response = handler->handlePFMergeCommand(NO_TX, cmd, need_inc_dirty);
-                break;
-            default:
-                response = Response(ResponseStatus::ERROR, "Unsupported command type");
-                break;
-        }
-        
-        // 序列化响应
-        std::string serializedResponse = RESPProtocol::serializeResponse(response);
-        
-        // 将结果转换为vector<char>
-        return std::vector<char>(serializedResponse.begin(), serializedResponse.end());
+        return response;
     } catch (const std::exception& e) {
         DKV_LOG_ERROR("执行RAFT命令失败: ", e.what());
         
         // 返回错误响应
-        Response errorResponse(ResponseStatus::ERROR, "RAFT command execution failed");
-        std::string serializedError = RESPProtocol::serializeResponse(errorResponse);
-        return std::vector<char>(serializedError.begin(), serializedError.end());
+        return Response(ResponseStatus::ERROR, "RAFT command execution failed");
     }
+}
+
+void RaftStateMachineManager::SetDKVServer(DKVServer* server) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    dkvServer_ = server;
+    DKV_LOG_INFO("设置DKVServer成功");
 }
 
 std::vector<char> RaftStateMachineManager::Snapshot() {

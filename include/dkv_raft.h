@@ -10,6 +10,13 @@
 #include <queue>
 #include <thread>
 #include <unordered_map>
+#include <iostream>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+#include <cstring>
+#include "dkv_core.hpp"
+#include "dkv_utils.hpp"
 
 namespace dkv {
 
@@ -29,7 +36,7 @@ enum class RaftState {
 // RAFT日志条目结构
 struct RaftLogEntry {
     int term;                 // 日志的任期
-    std::vector<char> command; // 日志命令
+    std::shared_ptr<Command> command;  // 日志命令
     int index;                // 日志索引
 };
 
@@ -81,7 +88,7 @@ public:
     virtual ~RaftStateMachine() = default;
     
     // 执行命令并返回结果
-    virtual std::vector<char> DoOp(const std::vector<char>& command) = 0;
+    virtual Response DoOp(const Command& command) = 0;
     
     // 创建快照
     virtual std::vector<char> Snapshot() = 0;
@@ -136,7 +143,10 @@ public:
 class Raft {
 public:
     // 构造函数
-    Raft(int me, const std::vector<std::string>& peers, std::shared_ptr<RaftPersister> persister, std::shared_ptr<RaftNetwork> network, std::shared_ptr<RaftStateMachine> stateMachine);
+    Raft(int me, const std::vector<std::string>& peers, 
+         std::shared_ptr<RaftPersister> persister, 
+         std::shared_ptr<RaftNetwork> network, 
+         std::shared_ptr<RaftStateMachine> stateMachine);
     
     // 析构函数
     ~Raft();
@@ -148,8 +158,11 @@ public:
     void Stop();
     
     // 提交命令到RAFT日志
-    bool StartCommand(const std::vector<char>& command, int& index, int& term);
-    
+    bool StartCommand(const Command& command, int& index, int& term) {
+        return StartCommand(std::make_shared<Command>(command), index, term);
+    }
+    bool StartCommand(const std::shared_ptr<Command>& command, int& index, int& term);
+
     // 获取当前节点ID
     int GetMe() const { return me_; }
     

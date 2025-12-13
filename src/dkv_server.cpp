@@ -478,6 +478,7 @@ bool DKVServer::initialize() {
         raft_state_machine_ = std::make_shared<RaftStateMachineManager>();
         raft_state_machine_->SetCommandHandler(command_handler_.get());
         raft_state_machine_->SetStorageEngine(storage_engine_.get());
+        raft_state_machine_->SetDKVServer(this);
         
         // 创建RAFT持久化
         raft_persister_ = std::make_shared<RaftFilePersister>(raft_data_dir_);
@@ -563,8 +564,38 @@ Response DKVServer::executeCommand(const Command& command, TransactionID tx_id) 
         return Response(ResponseStatus::ERROR, "Storage engine or command handler not initialized");
     }
     
-    // 检查是否是只读命令，用于内存管理
+    // 检查是否是只读命令，用于内存管理和Raft集成
     bool isReadOnly = isReadOnlyCommand(command.type);
+    
+    // 如果启用了Raft，处理写命令的Raft集成
+    if (enable_raft_ && !isReadOnly) {
+        // 检查当前节点是否是领导者
+        if (!raft_->IsLeader()) {
+            // 获取当前节点认为的领导者ID
+            int leaderId = raft_->GetCurrentLeaderId();
+            if (leaderId == -1) {
+                // 没有已知的领导者，返回错误
+                return Response(ResponseStatus::ERROR, "No known leader, please try again later");
+            } else {
+                // 返回当前领导者信息，格式为"MOVED <leaderId>"
+                string leaderInfo = "MOVED " + to_string(leaderId);
+                return Response(ResponseStatus::ERROR, leaderInfo);
+            }
+        }
+        
+        // 当前节点是领导者，将命令提交到Raft
+        int index, term;
+        auto r = make_shared<Command>(command);
+        bool ok = raft_->StartCommand(r, index, term);
+        if (!ok) {
+            // 提交失败，可能是因为在提交过程中失去了领导者地位
+            return Response(ResponseStatus::ERROR, "Failed to commit command to Raft");
+        }
+        
+        // Raft会异步处理命令并应用到状态机，这里直接返回成功
+        // TODO: 等待命令被提交后再返回
+        return Response(ResponseStatus::OK, "OK");
+    }
     
     // 如果不是只读命令，且设置了最大内存限制，则检查内存使用情况
     if (!isReadOnly && max_memory_ > 0) {

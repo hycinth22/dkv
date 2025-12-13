@@ -7,11 +7,13 @@
 #include <chrono>
 #include <random>
 #include <algorithm>
+#include <memory>
+using namespace std;
 
 namespace dkv {
 
 // RAFT构造函数
-Raft::Raft(int me, const std::vector<std::string>& peers, std::shared_ptr<RaftPersister> persister, std::shared_ptr<RaftNetwork> network, std::shared_ptr<RaftStateMachine> stateMachine)
+Raft::Raft(int me, const std::vector<std::string>& peers, std::shared_ptr<dkv::RaftPersister> persister, std::shared_ptr<RaftNetwork> network, std::shared_ptr<RaftStateMachine> stateMachine)
     : me_(me), peers_(peers), persister_(persister), network_(network), stateMachine_(stateMachine),
       state_(RaftState::FOLLOWER), currentTerm_(0), votedFor_(-1),
       commitIndex_(0), lastApplied_(0), running_(false), max_raft_state_(100 * 1024 * 1024),
@@ -75,7 +77,7 @@ void Raft::Stop() {
 }
 
 // 提交命令到RAFT日志
-bool Raft::StartCommand(const std::vector<char>& command, int& index, int& term) {
+bool Raft::StartCommand(const shared_ptr<Command>& command, int& index, int& term) {
     std::unique_lock<std::mutex> lock(mutex_);
     
     // 如果不是领导者，返回false
@@ -108,9 +110,8 @@ bool Raft::StartCommand(const std::vector<char>& command, int& index, int& term)
     // 返回索引
     index = entry.index;
     
-    DKV_LOG_INFOF("[Node {}] 成功提交命令，索引: {}, 任期: {}", me_, index, term);
+    DKV_LOG_INFOF("[Node {}] 成功开始命令，索引: {}, 任期: {}, 命令描述: {}", me_, index, term, command->desc());
     
-
     // 立即调用ReplicateLogs，确保日志条目能够及时被复制到跟随者
     lock.unlock();
     ReplicateLogs();
@@ -139,7 +140,7 @@ bool Raft::IsLeader() const {
 // 获取提交索引
 int Raft::GetCommitIndex() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    return commitIndex_;
+    return lastApplied_;
 }
 
 // 获取当前节点认为的领导者ID
@@ -201,7 +202,7 @@ AppendEntriesResponse Raft::OnAppendEntries(const AppendEntriesRequest& request)
             if (request.leaderCommit > commitIndex_) {
                 int oldCommitIndex = commitIndex_;
                 commitIndex_ = std::min(request.leaderCommit, log_.empty() ? logStartIndex_ - 1 : log_.back().index);
-                DKV_LOG_INFOF("[Node {}] 更新提交索引从 {} 到 {}", me_, oldCommitIndex, commitIndex_);
+                DKV_LOG_INFOF("[Node {}] FOLLOWER更新提交索引从 {} 到 {}", me_, oldCommitIndex, commitIndex_);
                 lock.unlock();
                 ApplyLogs();
                 lock.lock();
@@ -431,12 +432,13 @@ size_t Raft::PersistBytes() const {
     size += sizeof(currentTerm_);
     size += sizeof(votedFor_);
     
-    // 日志大小：每个日志条目包括term + index + command大小 + command内容
+    // 日志大小：每个日志条目包括term + index + command type + args size + args content
     for (const auto& entry : log_) {
         size += sizeof(entry.term);
         size += sizeof(entry.index);
-        size += sizeof(entry.command.size());
-        size += entry.command.size();
+        if (entry.command) {
+            size += entry.command->PersistBytes();
+        }
     }
     
     return size;
@@ -634,13 +636,13 @@ void Raft::ApplyLogs() {
         if (entry != nullptr) {
             DKV_LOG_DEBUGF("[Node {}] 找到日志条目，索引 {}，任期 {}，准备应用到状态机", me_, entry->index, entry->term);
             // 应用命令到状态机
-            std::vector<char> result = stateMachine_->DoOp(entry->command);
+            Response result = stateMachine_->DoOp(*entry->command);
             
             lock.lock();
             
             // 更新应用索引
             lastApplied_ = nextIndex;
-            DKV_LOG_DEBUGF("[Node {}] 成功应用日志索引 {}，更新lastApplied={}", me_, nextIndex, lastApplied_);
+            DKV_LOG_INFOF("[Node {}] 成功提交日志。索引 {}，更新lastApplied={}", me_, nextIndex, lastApplied_);
 
             // 检查是否需要创建快照
             if (max_raft_state_ > 0 && PersistBytes() > max_raft_state_) {
@@ -703,7 +705,7 @@ void Raft::UpdateCommitIndex() {
     if (newCommitIndex > commitIndex_) {
         int oldCommitIndex = commitIndex_;
         commitIndex_ = newCommitIndex;
-        DKV_LOG_INFOF("[Node {}] 更新提交索引从 {} 到 {}", me_, oldCommitIndex, commitIndex_);
+        DKV_LOG_INFOF("[Node {}] LEADER更新提交索引从 {} 到 {}", me_, oldCommitIndex, commitIndex_);
         lock.unlock();
         ApplyLogs();
         lock.lock();

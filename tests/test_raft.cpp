@@ -85,9 +85,9 @@ bool testRaftLogReplication() {
     // 检查是否成为领导者
     if (raft.IsLeader()) {
         // 提交命令
-        vector<char> command = {'t', 'e', 's', 't'};
-        int index, term;
-        bool result = raft.StartCommand(command, index, term);
+    Command command(CommandType::SET, {"test_key", "test_value"});
+    int index, term;
+    bool result = raft.StartCommand(command, index, term);
         ASSERT_TRUE(result);
         ASSERT_GT(index, 0);
         ASSERT_GT(term, 0);
@@ -158,8 +158,8 @@ bool testRaftStateMachineManager() {
     RaftStateMachineManager sm;
 
     // 测试DoOp方法（需要CommandHandler，这里只测试基本功能）
-    vector<char> command = {'t', 'e', 's', 't'};
-    vector<char> result = sm.DoOp(command);
+    Command command(CommandType::SET, {"test_key", "test_value"});
+    Response result = sm.DoOp(command);
 
     // 测试快照创建
     vector<char> snapshot = sm.Snapshot();
@@ -204,7 +204,10 @@ bool testRaftAppendEntriesValidation() {
         RaftLogEntry entry;
         entry.term = 1;
         entry.index = 1;
-        entry.command = {'t', 'e', 's', 't'};
+        auto cmd = make_shared<Command>();
+        cmd->type = CommandType::SET;
+        cmd->args = {"test_key", "test_value"};
+        entry.command = cmd;
         request.entries.push_back(entry);
         
         AppendEntriesResponse response = raft.OnAppendEntries(request);
@@ -224,7 +227,10 @@ bool testRaftAppendEntriesValidation() {
         RaftLogEntry entry;
         entry.term = 1;
         entry.index = 2; // 应该是1
-        entry.command = {'t', 'e', 's', 't'};
+        auto cmd = make_shared<Command>();
+        cmd->type = CommandType::SET;
+        cmd->args = {"test_key", "test_value"};
+        entry.command = cmd;
         request.entries.push_back(entry);
         
         AppendEntriesResponse response = raft.OnAppendEntries(request);
@@ -244,11 +250,17 @@ bool testRaftAppendEntriesValidation() {
         RaftLogEntry entry1, entry2;
         entry1.term = 1;
         entry1.index = 1;
-        entry1.command = {'t', 'e', 's', 't', '1'};
+        auto cmd1 = make_shared<Command>();
+        cmd1->type = CommandType::SET;
+        cmd1->args = {"test_key1", "test_value1"};
+        entry1.command = cmd1;
         
         entry2.term = 1;
         entry2.index = 3; // 应该是2
-        entry2.command = {'t', 'e', 's', 't', '2'};
+        auto cmd2 = make_shared<Command>();
+        cmd2->type = CommandType::SET;
+        cmd2->args = {"test_key2", "test_value2"};
+        entry2.command = cmd2;
         
         request.entries.push_back(entry1);
         request.entries.push_back(entry2);
@@ -270,7 +282,10 @@ bool testRaftAppendEntriesValidation() {
         RaftLogEntry entry;
         entry.term = -1; // 非法任期
         entry.index = 1;
-        entry.command = {'t', 'e', 's', 't'};
+        auto cmd = make_shared<Command>();
+        cmd->type = CommandType::SET;
+        cmd->args = {"test_key", "test_value"};
+        entry.command = cmd;
         request.entries.push_back(entry);
         
         AppendEntriesResponse response = raft.OnAppendEntries(request);
@@ -330,7 +345,7 @@ bool testRaftContinuousCommands() {
     if (raft.IsLeader()) {
         // 连续提交3个命令
         for (int i = 0; i < 3; i++) {
-            vector<char> command = {'c', 'm', 'd', static_cast<char>('0' + i)};
+            Command command(CommandType::SET, {"key" + to_string(i), "value" + to_string(i)});
             int index, term;
             bool result = raft.StartCommand(command, index, term);
             ASSERT_TRUE(result);
@@ -450,7 +465,7 @@ bool testRaftBasicAgree() {
     this_thread::sleep_for(chrono::milliseconds(300));
     
     // 提交命令
-    vector<char> command = {'t', 'e', 's', 't'};
+    Command command(CommandType::SET, {"test_key", "test_value"});
     int index = test.One(command, 3, false);
     ASSERT_GT(index, 0);
     
@@ -468,7 +483,7 @@ bool testRaftFollowerFailure() {
     this_thread::sleep_for(chrono::milliseconds(300));
     
     // 提交第一个命令
-    vector<char> command1 = {'t', 'e', 's', 't', '1'};
+    Command command1(CommandType::SET, {"test_key1", "test_value1"});
     int index1 = test.One(command1, 3, false);
     ASSERT_GT(index1, 0);
     
@@ -478,7 +493,7 @@ bool testRaftFollowerFailure() {
     test.GetRaft(follower)->Stop();
     
     // 提交第二个命令，应该只需要2个服务器确认
-    vector<char> command2 = {'t', 'e', 's', 't', '2'};
+    Command command2(CommandType::SET, {"test_key2", "test_value2"});
     int index2 = test.One(command2, 2, false);
     ASSERT_GT(index2, index1);
     
@@ -496,7 +511,7 @@ bool testRaftLeaderFailure() {
     this_thread::sleep_for(chrono::milliseconds(300));
     
     // 提交第一个命令
-    vector<char> command1 = {'t', 'e', 's', 't', '1'};
+    Command command1(CommandType::SET, {"test_key1", "test_value1"});
     int index1 = test.One(command1, 3, false);
     ASSERT_GT(index1, 0);
     
@@ -510,7 +525,7 @@ bool testRaftLeaderFailure() {
     ASSERT_NE(leader1, leader2);
     
     // 提交第二个命令
-    vector<char> command2 = {'t', 'e', 's', 't', '2'};
+    Command command2(CommandType::SET, {"test_key2", "test_value2"});
     int index2 = test.One(command2, 2, false);
     ASSERT_GT(index2, index1);
     
@@ -528,7 +543,9 @@ bool testRaftFailAgree() {
     this_thread::sleep_for(chrono::milliseconds(300));
     
     // 提交第一个命令
-    vector<char> command1 = {'t', 'e', 's', 't', '1'};
+    Command command1;
+    command1.type = CommandType::SET;
+    command1.args = {"test_key1", "test_value1"};
     int index1 = test.One(command1, 3, false);
     ASSERT_GT(index1, 0);
     
@@ -539,7 +556,7 @@ bool testRaftFailAgree() {
     
     // 提交多个命令
     for (int i = 0; i < 4; i++) {
-        vector<char> command = {'t', 'e', 's', 't', static_cast<char>('2' + i)};
+        Command command(CommandType::SET, {"test_key" + to_string(i+2), "test_value" + to_string(i+2)});
         int index = test.One(command, 2, false);
         ASSERT_GT(index, 0);
     }
@@ -551,7 +568,7 @@ bool testRaftFailAgree() {
     this_thread::sleep_for(chrono::milliseconds(200));
     
     // 提交最后一个命令，应该所有3个服务器都确认
-    vector<char> command5 = {'t', 'e', 's', 't', '6'};
+    Command command5(CommandType::SET, {"test_key6", "test_value6"});
     int index5 = test.One(command5, 3, false);
     ASSERT_GT(index5, 0);
     
@@ -570,7 +587,7 @@ bool testRaftSnapshotRestore() {
     
     // 提交多个递增命令
     for (int i = 0; i < 20; i++) {
-        vector<char> command = {'i'};
+        Command command(CommandType::SET, {"i"});
         int index = test.One(command, 3, false);
         ASSERT_GT(index, 0);
     }
@@ -593,8 +610,10 @@ bool testRaftSnapshotRestore() {
     // 等待领导者重新选举
     this_thread::sleep_for(chrono::milliseconds(300));
     
-    // 再次提交命令
-    vector<char> command = {'i'};
+    // 再次提交命令，确保所有节点都能正常工作
+    Command command;
+    command.type = CommandType::SET;
+    command.args = {"i"};
     int index = test.One(command, 3, false);
     ASSERT_GT(index, 0);
     
@@ -628,7 +647,7 @@ bool testRaftConcurrentLogReplication() {
     
     for (int i = 0; i < NOPERATIONS; i++) {
         threads.emplace_back([&test, &completed, i]() {
-            vector<char> command = {'c', 'm', 'd', static_cast<char>('0' + i % 10)};
+            Command command(CommandType::SET, {"cmd" + to_string(i % 10), "value" + to_string(i % 10)});
             int index = test.One(command, 3, false);
             if (index > 0) {
                 completed++;
@@ -659,7 +678,7 @@ bool testRaftLogTruncation() {
     
     // 提交一些命令
     for (int i = 0; i < 5; i++) {
-        vector<char> command = {'t', 'e', 's', 't', static_cast<char>('0' + i)};
+        Command command(CommandType::SET, {"test_key" + to_string(i), "test_value" + to_string(i)});
         int index = test.One(command, 3, false);
         ASSERT_GT(index, 0);
     }
@@ -673,7 +692,7 @@ bool testRaftLogTruncation() {
     
     // 提交更多命令
     for (int i = 5; i < 10; i++) {
-        vector<char> command = {'n', 'e', 'w', static_cast<char>('0' + i)};
+        Command command(CommandType::SET, {"new_key" + to_string(i), "new_value" + to_string(i)});
         int index = test.One(command, 2, false);
         ASSERT_GT(index, 0);
     }
@@ -685,7 +704,7 @@ bool testRaftLogTruncation() {
     this_thread::sleep_for(chrono::milliseconds(300));
     
     // 再次提交命令，确保所有节点都能正常工作
-    vector<char> command = {'f', 'i', 'n', 'a', 'l'};
+    Command command(CommandType::SET, {"final_key", "final_value"});
     int index = test.One(command, 3, false);
     ASSERT_GT(index, 0);
     
@@ -780,7 +799,7 @@ bool testRaftSpeed() {
     this_thread::sleep_for(chrono::milliseconds(300));
     
     // 提交一个命令，确保领导者已准备好
-    vector<char> command = {'i'};
+    Command command(CommandType::SET, {"i"});
     test.One(command, 3, false);
     
     // 开始计时
@@ -788,7 +807,7 @@ bool testRaftSpeed() {
     
     // 提交多个命令
     for (int i = 0; i < numOps; i++) {
-        vector<char> cmd = {'i'};
+        Command cmd(CommandType::SET, {"i"});
         test.One(cmd, 3, false);
     }
     
@@ -820,7 +839,7 @@ bool testRaftLeaderPartition() {
     this_thread::sleep_for(chrono::milliseconds(300));
     
     // 提交初始命令
-    vector<char> command = {'i'};
+    Command command(CommandType::SET, {"i"});
     test.One(command, 3, false);
     
     // 获取当前领导者
@@ -839,7 +858,7 @@ bool testRaftLeaderPartition() {
     ASSERT_NE(new_leader, leader);
     
     // 在新领导者下提交命令
-    vector<char> command2 = {'i'};
+    Command command2(CommandType::SET, {"i"});
     int index = test.One(command2, 2, false); // 只有2个节点可用
     ASSERT_GT(index, 0);
     
@@ -858,7 +877,7 @@ bool testRaftLeaderPartition() {
     this_thread::sleep_for(chrono::milliseconds(300));
     
     // 提交最后一个命令，确保所有节点都能正常工作
-    vector<char> command3 = {'i'};
+    Command command3(CommandType::SET, {"i"});
     test.One(command3, 3, false);
     
     // 检查所有状态机的计数器值

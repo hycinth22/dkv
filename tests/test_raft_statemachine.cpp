@@ -19,59 +19,6 @@ using namespace std;
 
 namespace dkv {
 
-// 模拟的计数器状态机实现，用于测试
-class CounterStateMachine : public RaftStateMachine {
-private:
-    int counter_;
-    std::mutex mutex_;
-
-public:
-    CounterStateMachine() : counter_(0) {}
-
-    // 执行命令并返回结果
-    vector<char> DoOp(const vector<char>& command) override {
-        std::unique_lock<std::mutex> lock(mutex_);
-        
-        if (!command.empty()) {
-            switch (command[0]) {
-                case 'i': // increment
-                    counter_++;
-                    break;
-                case 'd': // decrement
-                    counter_--;
-                    break;
-                case 'r': // reset
-                    counter_ = 0;
-                    break;
-            }
-        }
-        
-        // 返回当前计数器值
-        string result = to_string(counter_);
-        return vector<char>(result.begin(), result.end());
-    }
-
-    // 创建快照
-    vector<char> Snapshot() override {
-        std::unique_lock<std::mutex> lock(mutex_);
-        string snapshot = to_string(counter_);
-        return vector<char>(snapshot.begin(), snapshot.end());
-    }
-
-    // 从快照恢复
-    void Restore(const vector<char>& snapshot) override {
-        std::unique_lock<std::mutex> lock(mutex_);
-        string snapshot_str(snapshot.begin(), snapshot.end());
-        counter_ = stoi(snapshot_str);
-    }
-
-    // 获取当前计数器值
-    int GetCounter() {
-        std::unique_lock<std::mutex> lock(mutex_);
-        return counter_;
-    }
-};
-
 // 测试基本的状态机复制
 bool testRaftStateMachineBasic() {
     RaftTest test(3);
@@ -81,7 +28,7 @@ bool testRaftStateMachineBasic() {
     this_thread::sleep_for(chrono::milliseconds(300));
     
     // 提交递增命令
-    vector<char> command = {'i'};
+    Command command(CommandType::UNKNOWN, {"i"});
     int index = test.One(command, 3, false);
     ASSERT_GT(index, 0);
     
@@ -115,7 +62,7 @@ bool testRaftStateMachineConcurrent() {
     
     for (int i = 0; i < NOPERATIONS; i++) {
         threads.emplace_back([&test, &completed]() {
-            vector<char> command = {'i'};
+            Command command(CommandType::UNKNOWN, {"i"});
             test.One(command, 3, false);
             completed++;
         });
@@ -149,7 +96,7 @@ bool testRaftStateMachineSnapshot() {
     this_thread::sleep_for(chrono::milliseconds(300));
     
     // 提交多个递增命令
-    vector<char> command = {'i'};
+    Command command(CommandType::UNKNOWN, {"i"});
     for (int i = 0; i < 10; i++) {
         test.One(command, 3, false);
     }
@@ -197,7 +144,7 @@ bool testRaftStateMachineLeaderFailure() {
     ASSERT_GT(leader, -1);
     
     // 提交递增命令
-    vector<char> command = {'i'};
+    Command command(CommandType::UNKNOWN, {"i"});
     test.One(command, 3, false);
     
     // 停止领导者
@@ -247,7 +194,7 @@ bool testRaftStateMachineRestartReplay() {
     this_thread::sleep_for(chrono::milliseconds(300));
     
     // 提交多个递增命令
-    vector<char> command = {'i'};
+    Command command(CommandType::UNKNOWN, {"i"});
     for (int i = 0; i < NINC; i++) {
         test.One(command, 3, false);
     }
@@ -293,7 +240,7 @@ bool testRaftStateMachineShutdown() {
     this_thread::sleep_for(chrono::milliseconds(300));
     
     // 提交一些命令
-    vector<char> command = {'i'};
+    Command command(CommandType::UNKNOWN, {"i"});
     for (int i = 0; i < 10; i++) {
         test.One(command, 3, false);
     }
@@ -334,7 +281,7 @@ bool testRaftStateMachineRestartSubmit() {
     this_thread::sleep_for(chrono::milliseconds(300));
     
     // 提交多个递增命令
-    vector<char> command = {'i'};
+    Command command(CommandType::UNKNOWN, {"i"});
     for (int i = 0; i < NINC; i++) {
         test.One(command, 3, false);
     }
