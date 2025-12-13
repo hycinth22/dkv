@@ -12,20 +12,346 @@ namespace dkv {
 
 // RAFT TCP网络实现构造函数
 RaftTcpNetwork::RaftTcpNetwork(int me, const std::vector<std::string>& peers) : me_(me), peers_(peers) {
+    // 初始化连接状态信息
+    InitializeConnections();
+    
     // 启动监听线程
     StartListener();
+    
+    // 启动连接维护线程
+    maintenance_running_ = true;
+    connection_maintenance_thread_ = std::thread(&RaftTcpNetwork::ConnectionMaintenance, this);
 }
 
 // RAFT TCP网络实现析构函数
 RaftTcpNetwork::~RaftTcpNetwork() {
+    // 停止连接维护线程
+    maintenance_running_ = false;
+    maintenance_cv_.notify_one();
+    if (connection_maintenance_thread_.joinable()) {
+        connection_maintenance_thread_.join();
+    }
+    
     // 停止监听线程
     StopListener();
     
     // 关闭所有连接
     for (const auto& conn : connections_) {
-        close(conn.second);
+        if (conn.second.sockfd >= 0) {
+            close(conn.second.sockfd);
+        }
     }
     connections_.clear();
+}
+
+// 初始化所有连接
+void RaftTcpNetwork::InitializeConnections() {
+    std::lock_guard<std::mutex> lock(connections_mutex_);
+    for (size_t i = 0; i < peers_.size(); i++) {
+        if (i == (size_t)me_) {
+            continue;  // 跳过自己
+        }
+        
+        ConnectionInfo conn_info;
+        conn_info.peer_addr = peers_[i];
+        conn_info.state = ConnectionState::DISCONNECTED;
+        conn_info.sockfd = -1;
+        conn_info.retry_count = 0;
+        conn_info.next_retry_time = std::chrono::steady_clock::now();
+        
+        connections_[i] = conn_info;
+        DKV_LOG_INFO("初始化连接到节点 ", i, "，地址: ", peers_[i]);
+    }
+}
+
+// 连接维护线程函数
+void RaftTcpNetwork::ConnectionMaintenance() {
+    DKV_LOG_INFO("连接维护线程启动");
+    
+    while (maintenance_running_) {
+        CheckAndUpdateConnections();
+        
+        // 每100毫秒检查一次连接状态
+        std::unique_lock<std::mutex> lock(connections_mutex_);
+        maintenance_cv_.wait_for(lock, std::chrono::milliseconds(100));
+    }
+    
+    DKV_LOG_INFO("连接维护线程停止");
+}
+
+// 检查并更新连接状态
+void RaftTcpNetwork::CheckAndUpdateConnections() {
+    std::lock_guard<std::mutex> lock(connections_mutex_);
+    
+    auto now = std::chrono::steady_clock::now();
+    
+    for (auto& conn_pair : connections_) {
+        int serverId = conn_pair.first;
+        ConnectionInfo& conn_info = conn_pair.second;
+        
+        // 检查是否需要尝试连接
+        if ((conn_info.state == ConnectionState::DISCONNECTED || 
+             conn_info.state == ConnectionState::RECONNECTING) && 
+            now >= conn_info.next_retry_time) {
+            
+            DKV_LOG_INFO("尝试连接到节点 ", serverId, "，地址: ", conn_info.peer_addr);
+            conn_info.state = ConnectionState::CONNECTING;
+            
+            // 在单独的线程中尝试连接，避免阻塞维护线程
+            std::thread([this, serverId]() {
+                bool success = TryConnect(serverId);
+                if (success) {
+                    DKV_LOG_INFO("成功连接到节点 ", serverId);
+                } else {
+                    DKV_LOG_WARNING("连接到节点 ", serverId, " 失败");
+                }
+            }).detach();
+        }
+    }
+}
+
+// 尝试连接单个节点
+bool RaftTcpNetwork::TryConnect(int serverId) {
+    if (serverId < 0 || (size_t)serverId >= peers_.size()) {
+        DKV_LOG_ERROR("无效的节点ID: ", serverId);
+        return false;
+    }
+    
+    const std::string& peer = peers_[serverId];
+    
+    // 解析节点地址
+    size_t colonPos = peer.find(':');
+    if (colonPos == std::string::npos) {
+        DKV_LOG_ERROR("无效的节点地址格式: ", peer);
+        
+        // 更新连接状态
+        std::lock_guard<std::mutex> lock(connections_mutex_);
+        auto& conn_info = connections_[serverId];
+        conn_info.state = ConnectionState::RECONNECTING;
+        conn_info.retry_count++;
+        conn_info.next_retry_time = CalculateNextRetryTime(conn_info.retry_count);
+        return false;
+    }
+    
+    std::string ip = peer.substr(0, colonPos);
+    int port = stoi(peer.substr(colonPos + 1));
+    
+    // 创建socket
+    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd < 0) {
+        DKV_LOG_ERROR("创建socket失败: ", strerror(errno));
+        
+        // 更新连接状态
+        std::lock_guard<std::mutex> lock(connections_mutex_);
+        auto& conn_info = connections_[serverId];
+        conn_info.state = ConnectionState::RECONNECTING;
+        conn_info.retry_count++;
+        conn_info.next_retry_time = CalculateNextRetryTime(conn_info.retry_count);
+        return false;
+    }
+    
+    // 设置套接字为非阻塞
+    int flags = fcntl(sockfd, F_GETFL, 0);
+    if (flags < 0) {
+        DKV_LOG_ERROR("获取socket标志失败: ", strerror(errno));
+        close(sockfd);
+        
+        // 更新连接状态
+        std::lock_guard<std::mutex> lock(connections_mutex_);
+        auto& conn_info = connections_[serverId];
+        conn_info.state = ConnectionState::RECONNECTING;
+        conn_info.retry_count++;
+        conn_info.next_retry_time = CalculateNextRetryTime(conn_info.retry_count);
+        return false;
+    }
+    
+    if (fcntl(sockfd, F_SETFL, flags | O_NONBLOCK) < 0) {
+        DKV_LOG_ERROR("设置socket为非阻塞失败: ", strerror(errno));
+        close(sockfd);
+        
+        // 更新连接状态
+        std::lock_guard<std::mutex> lock(connections_mutex_);
+        auto& conn_info = connections_[serverId];
+        conn_info.state = ConnectionState::RECONNECTING;
+        conn_info.retry_count++;
+        conn_info.next_retry_time = CalculateNextRetryTime(conn_info.retry_count);
+        return false;
+    }
+    
+    // 设置地址结构
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    
+    if (inet_pton(AF_INET, ip.c_str(), &addr.sin_addr) <= 0) {
+        DKV_LOG_ERROR("无效的IP地址: ", ip);
+        close(sockfd);
+        
+        // 更新连接状态
+        std::lock_guard<std::mutex> lock(connections_mutex_);
+        auto& conn_info = connections_[serverId];
+        conn_info.state = ConnectionState::RECONNECTING;
+        conn_info.retry_count++;
+        conn_info.next_retry_time = CalculateNextRetryTime(conn_info.retry_count);
+        return false;
+    }
+    
+    // 连接到节点
+    int ret = connect(sockfd, (struct sockaddr*)&addr, sizeof(addr));
+    if (ret < 0 && errno != EINPROGRESS) {
+        DKV_LOG_ERROR("连接到节点 ", serverId, " 失败: ", strerror(errno));
+        close(sockfd);
+        
+        // 更新连接状态
+        std::lock_guard<std::mutex> lock(connections_mutex_);
+        auto& conn_info = connections_[serverId];
+        conn_info.state = ConnectionState::RECONNECTING;
+        conn_info.retry_count++;
+        conn_info.next_retry_time = CalculateNextRetryTime(conn_info.retry_count);
+        return false;
+    }
+    
+    // 如果是非阻塞连接，等待连接完成
+    if (ret == 0 || errno == EINPROGRESS) {
+        fd_set writefds;
+        struct timeval tv;
+        
+        FD_ZERO(&writefds);
+        FD_SET(sockfd, &writefds);
+        
+        tv.tv_sec = 5;  // 5秒超时
+        tv.tv_usec = 0;
+        
+        ret = select(sockfd + 1, nullptr, &writefds, nullptr, &tv);
+        if (ret <= 0) {
+            DKV_LOG_ERROR("连接超时或出错: ", strerror(errno));
+            close(sockfd);
+            
+            // 更新连接状态
+            std::lock_guard<std::mutex> lock(connections_mutex_);
+            auto& conn_info = connections_[serverId];
+            conn_info.state = ConnectionState::RECONNECTING;
+            conn_info.retry_count++;
+            conn_info.next_retry_time = CalculateNextRetryTime(conn_info.retry_count);
+            return false;
+        }
+        
+        // 检查连接是否成功
+        int so_error;
+        socklen_t len = sizeof(so_error);
+        if (getsockopt(sockfd, SOL_SOCKET, SO_ERROR, &so_error, &len) < 0 || so_error != 0) {
+            DKV_LOG_ERROR("连接到节点 ", serverId, " 失败: ", strerror(so_error));
+            close(sockfd);
+            
+            // 更新连接状态
+            std::lock_guard<std::mutex> lock(connections_mutex_);
+            auto& conn_info = connections_[serverId];
+            conn_info.state = ConnectionState::RECONNECTING;
+            conn_info.retry_count++;
+            conn_info.next_retry_time = CalculateNextRetryTime(conn_info.retry_count);
+            return false;
+        }
+    }
+    
+    // 连接成功
+    DKV_LOG_INFO("成功连接到节点 ", serverId, " (", ip, ":", port, ")");
+    
+    // 更新连接状态
+    std::lock_guard<std::mutex> lock(connections_mutex_);
+    auto& conn_info = connections_[serverId];
+    
+    // 关闭旧连接（如果存在）
+    if (conn_info.sockfd >= 0) {
+        close(conn_info.sockfd);
+    }
+    
+    conn_info.sockfd = sockfd;
+    conn_info.state = ConnectionState::CONNECTED;
+    conn_info.retry_count = 0;
+    
+    return true;
+}
+
+// 计算下次重试时间（随机指数退避算法）
+std::chrono::steady_clock::time_point RaftTcpNetwork::CalculateNextRetryTime(int retry_count) {
+    // 基础重试间隔为100ms
+    const std::chrono::milliseconds base_delay(100);
+    // 最大重试间隔为5秒
+    const std::chrono::milliseconds max_delay(5000);
+    
+    // 计算指数退避时间：base_delay * 2^retry_count
+    auto delay = base_delay * (1 << std::min(retry_count, 10));  // 限制最大指数为10
+    
+    // 添加随机抖动（0.5-1.5倍的延迟）
+    unsigned int seed = std::chrono::steady_clock::now().time_since_epoch().count();
+    double jitter = 0.5 + (rand_r(&seed) / (RAND_MAX + 1.0));
+    
+    auto final_delay = std::chrono::duration_cast<std::chrono::milliseconds>(delay * jitter);
+    
+    // 确保不超过最大延迟
+    if (final_delay > max_delay) {
+        final_delay = max_delay;
+    }
+    
+    return std::chrono::steady_clock::now() + final_delay;
+}
+
+// 检查连接是否有效
+bool RaftTcpNetwork::IsConnectionValid(int sockfd) {
+    if (sockfd < 0) {
+        return false;
+    }
+    
+    // 使用select检查套接字是否可写，超时时间为100ms
+    fd_set writefds;
+    struct timeval tv;
+    
+    FD_ZERO(&writefds);
+    FD_SET(sockfd, &writefds);
+    
+    tv.tv_sec = 0;
+    tv.tv_usec = 100000;  // 100ms
+    
+    int ret = select(sockfd + 1, nullptr, &writefds, nullptr, &tv);
+    if (ret < 0) {
+        return false;
+    }
+    
+    if (ret == 0) {
+        // 超时，连接可能已失效
+        return false;
+    }
+    
+    // 检查套接字是否有错误
+    int so_error;
+    socklen_t len = sizeof(so_error);
+    if (getsockopt(sockfd, SOL_SOCKET, SO_ERROR, &so_error, &len) < 0 || so_error != 0) {
+        return false;
+    }
+    
+    return true;
+}
+
+// 关闭连接
+void RaftTcpNetwork::CloseConnection(int serverId) {
+    std::lock_guard<std::mutex> lock(connections_mutex_);
+    
+    auto it = connections_.find(serverId);
+    if (it != connections_.end()) {
+        ConnectionInfo& conn_info = it->second;
+        
+        if (conn_info.sockfd >= 0) {
+            close(conn_info.sockfd);
+            conn_info.sockfd = -1;
+        }
+        
+        conn_info.state = ConnectionState::RECONNECTING;
+        conn_info.retry_count++;
+        conn_info.next_retry_time = CalculateNextRetryTime(conn_info.retry_count);
+        
+        DKV_LOG_INFO("关闭到节点 ", serverId, " 的连接，准备重新连接");
+    }
 }
 
 // 启动网络监听
@@ -437,7 +763,7 @@ AppendEntriesResponse RaftTcpNetwork::SendAppendEntries(int serverId, const Appe
     fullRequestData.push_back('A');
     fullRequestData.insert(fullRequestData.end(), requestData.begin(), requestData.end());
     
-    // 3. 建立连接
+    // 3. 获取连接
     int sockfd = EstablishConnection(serverId);
     if (sockfd < 0) {
         AppendEntriesResponse response;
@@ -449,7 +775,9 @@ AppendEntriesResponse RaftTcpNetwork::SendAppendEntries(int serverId, const Appe
     
     // 4. 发送请求
     if (!SendData(sockfd, fullRequestData)) {
-        close(sockfd);
+        // 发送失败，标记连接为需要重新连接
+        DKV_LOG_ERROR("发送AppendEntries请求到节点 ", serverId, " 失败，关闭连接");
+        CloseConnection(serverId);
         AppendEntriesResponse response;
         response.term = 0;
         response.success = false;
@@ -457,11 +785,20 @@ AppendEntriesResponse RaftTcpNetwork::SendAppendEntries(int serverId, const Appe
         return response;
     }
     
-    // 4. 接收响应
+    // 5. 接收响应
     std::vector<char> responseData = ReceiveData(sockfd);
-    close(sockfd);
+    if (responseData.empty()) {
+        // 接收失败，标记连接为需要重新连接
+        DKV_LOG_ERROR("接收AppendEntries响应失败，关闭连接");
+        CloseConnection(serverId);
+        AppendEntriesResponse response;
+        response.term = 0;
+        response.success = false;
+        response.matchIndex = 0;
+        return response;
+    }
     
-    // 5. 反序列化响应
+    // 6. 反序列化响应
     AppendEntriesResponse response = DeserializeAppendEntriesResponse(responseData);
     
     DKV_LOG_INFO("收到AppendEntries响应，节点 ", serverId, "，结果 ", response.success);
@@ -481,7 +818,7 @@ RequestVoteResponse RaftTcpNetwork::SendRequestVote(int serverId, const RequestV
     fullRequestData.push_back('V');
     fullRequestData.insert(fullRequestData.end(), requestData.begin(), requestData.end());
     
-    // 3. 建立连接
+    // 3. 获取连接
     int sockfd = EstablishConnection(serverId);
     if (sockfd < 0) {
         RequestVoteResponse response;
@@ -492,18 +829,28 @@ RequestVoteResponse RaftTcpNetwork::SendRequestVote(int serverId, const RequestV
     
     // 4. 发送请求
     if (!SendData(sockfd, fullRequestData)) {
-        close(sockfd);
+        // 发送失败，标记连接为需要重新连接
+        DKV_LOG_ERROR("发送RequestVote请求到节点 ", serverId, " 失败，关闭连接");
+        CloseConnection(serverId);
         RequestVoteResponse response;
         response.term = 0;
         response.voteGranted = false;
         return response;
     }
     
-    // 4. 接收响应
+    // 5. 接收响应
     std::vector<char> responseData = ReceiveData(sockfd);
-    close(sockfd);
+    if (responseData.empty()) {
+        // 接收失败，标记连接为需要重新连接
+        DKV_LOG_ERROR("接收RequestVote响应失败，关闭连接");
+        CloseConnection(serverId);
+        RequestVoteResponse response;
+        response.term = 0;
+        response.voteGranted = false;
+        return response;
+    }
     
-    // 5. 反序列化响应
+    // 6. 反序列化响应
     RequestVoteResponse response = DeserializeRequestVoteResponse(responseData);
     
     DKV_LOG_INFO("收到RequestVote响应，节点 ", serverId, "，结果 ", response.voteGranted);
@@ -511,53 +858,50 @@ RequestVoteResponse RaftTcpNetwork::SendRequestVote(int serverId, const RequestV
     return response;
 }
 
-// 建立连接
+// 建立连接（复用现有连接或创建新连接）
 int RaftTcpNetwork::EstablishConnection(int serverId) {
     if (serverId < 0 || (size_t)serverId >= peers_.size()) {
         DKV_LOG_ERROR("无效的节点ID: ", serverId);
         return -1;
     }
     
-    const std::string& peer = peers_[serverId];
+    // 检查是否已有有效连接
+    {
+        std::lock_guard<std::mutex> lock(connections_mutex_);
+        auto it = connections_.find(serverId);
+        if (it != connections_.end()) {
+            const ConnectionInfo& conn_info = it->second;
+            if (conn_info.state == ConnectionState::CONNECTED && 
+                conn_info.sockfd >= 0 && 
+                IsConnectionValid(conn_info.sockfd)) {
+                DKV_LOG_DEBUG("复用现有连接到节点 ", serverId);
+                return conn_info.sockfd;
+            }
+        }
+    }
     
-    // 解析节点地址
-    size_t colonPos = peer.find(':');
-    if (colonPos == std::string::npos) {
-        DKV_LOG_ERROR("无效的节点地址格式: ", peer);
+    // 如果没有有效连接，尝试建立新连接
+    DKV_LOG_DEBUG("没有有效连接，尝试建立新连接到节点 ", serverId);
+    
+    // 直接调用TryConnect尝试建立连接
+    bool success = TryConnect(serverId);
+    if (!success) {
+        DKV_LOG_ERROR("建立新连接到节点 ", serverId, " 失败");
         return -1;
     }
     
-    std::string ip = peer.substr(0, colonPos);
-    int port = stoi(peer.substr(colonPos + 1));
-    
-    // 创建socket
-    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (sockfd < 0) {
-        DKV_LOG_ERROR("创建socket失败: ", strerror(errno));
-        return -1;
+    // 再次检查连接状态
+    {
+        std::lock_guard<std::mutex> lock(connections_mutex_);
+        auto it = connections_.find(serverId);
+        if (it != connections_.end() && 
+            it->second.state == ConnectionState::CONNECTED && 
+            it->second.sockfd >= 0) {
+            return it->second.sockfd;
+        }
     }
     
-    // 设置地址结构
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(port);
-    
-    if (inet_pton(AF_INET, ip.c_str(), &addr.sin_addr) <= 0) {
-        DKV_LOG_ERROR("无效的IP地址: ", ip);
-        close(sockfd);
-        return -1;
-    }
-    
-    // 连接到节点
-    if (connect(sockfd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        DKV_LOG_ERROR("连接到节点 ", serverId, " 失败: ", strerror(errno));
-        close(sockfd);
-        return -1;
-    }
-    
-    DKV_LOG_INFO("成功连接到节点 ", serverId, " (", ip, ":", port, ")");
-    return sockfd;
+    return -1;
 }
 
 // 发送数据
@@ -758,7 +1102,7 @@ InstallSnapshotResponse RaftTcpNetwork::SendInstallSnapshot(int serverId, const 
     fullRequestData.push_back('S');
     fullRequestData.insert(fullRequestData.end(), requestData.begin(), requestData.end());
     
-    // 3. 建立连接
+    // 3. 获取连接
     int sockfd = EstablishConnection(serverId);
     if (sockfd < 0) {
         InstallSnapshotResponse response;
@@ -769,18 +1113,28 @@ InstallSnapshotResponse RaftTcpNetwork::SendInstallSnapshot(int serverId, const 
     
     // 4. 发送请求
     if (!SendData(sockfd, fullRequestData)) {
-        close(sockfd);
+        // 发送失败，标记连接为需要重新连接
+        DKV_LOG_ERROR("发送InstallSnapshot请求到节点 ", serverId, " 失败，关闭连接");
+        CloseConnection(serverId);
         InstallSnapshotResponse response;
         response.term = 0;
         response.success = false;
         return response;
     }
     
-    // 4. 接收响应
+    // 5. 接收响应
     std::vector<char> responseData = ReceiveData(sockfd);
-    close(sockfd);
+    if (responseData.empty()) {
+        // 接收失败，标记连接为需要重新连接
+        DKV_LOG_ERROR("接收InstallSnapshot响应失败，关闭连接");
+        CloseConnection(serverId);
+        InstallSnapshotResponse response;
+        response.term = 0;
+        response.success = false;
+        return response;
+    }
     
-    // 5. 反序列化响应
+    // 6. 反序列化响应
     InstallSnapshotResponse response = DeserializeInstallSnapshotResponse(responseData);
     
     DKV_LOG_INFO("收到InstallSnapshot响应，节点 ", serverId, "，结果 ", response.success);
