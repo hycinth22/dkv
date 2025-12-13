@@ -1,20 +1,6 @@
 # DKV
 
-DKV是一个基于现代C++17实现的高性能键值（Key-Value）存储系统，具备数据持久化支持和高并发处理能力。
-
-**现代C++17实现**：利用智能指针、移动语义、原子操作、线程安全等现代C++特性。类型安全的枚举和强类型。模板元编程。
-
-**持久化**：支持RDB快照、AOF持久化写入与恢复。支持自动AOF重写。
-
-**高并发处理**：基于多线程Reactor模型、事件驱动的非阻塞I/O（epoll），支持高并发连接处理。使用线程池并发处理Command。
-
-**线程安全**：使用读写锁保护数据访问，支持多客户端并发连接
-
-**TTL支持**：支持为key设置过期时间; 后台根据过期时间自动清理过期键值对
-
-**内存限制与淘汰**：支持内存配额限制，支持8种淘汰策略NOEVICTION、{VOLATILE/ALLKEYS}_{LRU/LFU/RANDOM}、VOLATILE_TTL。
-
-**事务支持**：支持MULTI、EXEC、DISCARD等事务命令，支持四种事务隔离级别
+基于现代C++17实现的高性能键值（Key-Value）存储系统，具备数据持久化支持和高并发处理能力。
 
 ### Command Support
 
@@ -31,42 +17,22 @@ DKV是一个基于现代C++17实现的高性能键值（Key-Value）存储系统
 | 服务器管理   | INFO、DBSIZE、FLUSH、SHUTDOWN、SAVE/BGSAVE、             |
 | 事务        | MULTI、EXEC、DISCARD                                    |
 
-## 项目结构
 
-```
-dkv/
-├── include/            # 头文件目录
-│   ├── dkv_core.hpp           # 核心头文件，定义基本类型和接口
-│   ├── dkv_datatypes.hpp      # 数据类型定义
-│   ├── dkv_datatype_string.hpp # String数据类型定义
-│   ├── dkv_datatype_hyperloglog.hpp # HyperLogLog数据类型定义
-│   ├── dkv_network.hpp        # 网络通信模块
-│   ├── dkv_server.hpp         # 服务器定义
-│   ├── dkv_storage.hpp        # 存储引擎定义
-│   └── dkv_resp.hpp           # RESP协议实现
-├── src/                # 源代码目录
-│   ├── dkv_core.cpp           # 核心功能实现
-│   ├── dkv_datatype_string.cpp # String数据类型实现
-│   ├── dkv_datatype_hyperloglog.cpp # HyperLogLog数据类型实现
-│   ├── dkv_network.cpp        # 网络通信实现
-│   ├── dkv_server.cpp         # 服务器实现
-│   ├── dkv_storage.cpp        # 存储引擎实现
-│   ├── dkv_resp.cpp           # RESP协议实现
-│   └── dkv_main.cpp           # 主程序入口
-├── tests/              # 测试代码
-│   ├── test_basic.cpp         # 基本功能测试
-│   ├── test_datatype_string.cpp # String数据类型测试
-│   ├── test_datatype_hyperloglog.cpp # HyperLogLog数据类型测试
-│   ├── test_runner.hpp        # 测试框架
-│   └── test_client.py         # Python测试客户端
-├── docs/               # 项目文档
-│   ├── README.md              # 详细文档
-│   └── V0.1_SUMMARY.md        # V0.1版本总结
-├── build/              # 构建目录（编译时自动生成）
-├── CMakeLists.txt      # CMake构建配置
-└── config.conf         # 配置文件示例
-```
+**现代C++17实现**：利用智能指针、移动语义、原子操作、线程安全等现代C++特性。类型安全的枚举和强类型。模板元编程。
 
+**持久化**：支持RDB快照、AOF持久化写入与恢复。支持自动AOF重写。
+
+**高并发处理**：基于多线程Reactor模型、事件驱动的非阻塞I/O（epoll），支持高并发连接处理。使用线程池并发处理Command。
+
+**线程安全**：使用读写锁保护数据访问，支持多客户端并发连接
+
+**TTL支持**：支持为key设置过期时间; 后台根据过期时间自动清理过期键值对
+
+**内存限制与淘汰**：支持内存配额限制，支持8种淘汰策略NOEVICTION、{VOLATILE/ALLKEYS}_{LRU/LFU/RANDOM}、VOLATILE_TTL。
+
+**事务支持**：支持MULTI、EXEC、DISCARD等事务命令，支持四种事务隔离级别
+
+**主从复制**：基于RAFT协议
 
 ## Build
 
@@ -150,12 +116,6 @@ auto_aof_rewrite_min_size 64mb
 # 事务配置
 transaction_isolation_level read_committed # read_uncommitted, read_committed, repeatable_read, serializable
 ```
-
-## 未来规划
-
-1. 实现分布式支持（主从复制、一致性哈希分片）
-2. 支持标准REDIS客户端（REDIS-CLI）
-3. 支持更多高级命令和功能
 
 ## License
 
