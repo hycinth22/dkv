@@ -1,6 +1,6 @@
-#include "dkv_storage.hpp"
-#include "dkv_datatype_string.hpp"
-#include "dkv_transaction_manager.hpp"
+#include "storage/dkv_storage.hpp"
+#include "datatypes/dkv_datatype_string.hpp"
+#include "transaction/dkv_transaction_manager.hpp"
 #include "storage/dkv_simple_storage.h"
 #include <memory>
 #include <vector>

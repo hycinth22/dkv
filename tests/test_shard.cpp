@@ -1,5 +1,5 @@
 #include <gtest/gtest.h>
-#include "dkv_shard.hpp"
+#include "multinode/shard/dkv_shard.hpp"
 #include "dkv_server.hpp"
 
 using namespace dkv;

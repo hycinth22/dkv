@@ -1,5 +1,5 @@
 #include "dkv_core.hpp"
-#include "dkv_storage.hpp"
+#include "storage/dkv_storage.hpp"
 #include "dkv_datatypes.hpp"
 #include "test_runner.hpp"
 #include <iostream>

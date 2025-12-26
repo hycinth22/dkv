@@ -1,13 +1,13 @@
 #pragma once
 
 #include "dkv_core.hpp"
-#include "dkv_storage.hpp"
-#include "dkv_network.hpp"
-#include "dkv_aof.hpp"
+#include "storage/dkv_storage.hpp"
+#include "net/dkv_network.hpp"
+#include "persist/dkv_aof.hpp"
 #include "dkv_command_handler.hpp"
-#include "dkv_transaction.hpp"
-#include "dkv_transaction_manager.hpp"
-#include "dkv_raft.h"
+#include "transaction/dkv_transaction.hpp"
+#include "transaction/dkv_transaction_manager.hpp"
+#include "multinode/raft/dkv_raft.hpp"
 
 // 前置声明
 namespace dkv {

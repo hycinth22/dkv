@@ -1,6 +1,6 @@
-#include "dkv_mvcc.hpp"
-#include "dkv_storage.hpp"
-#include "dkv_datatype_string.hpp"
+#include "transaction/dkv_mvcc.hpp"
+#include "storage/dkv_storage.hpp"
+#include "datatypes/dkv_datatype_string.hpp"
 #include "test_runner.hpp"
 #include <memory>
 #include <vector>

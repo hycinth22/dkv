@@ -1,7 +1,7 @@
-#include "dkv_storage.hpp"
+#include "storage/dkv_storage.hpp"
 #include "dkv_core.hpp"
 #include "dkv_utils.hpp"
-#include "dkv_datatype_bitmap.hpp"
+#include "datatypes/dkv_datatype_bitmap.hpp"
 #include "test_runner.hpp"
 #include <iostream>
 #include <cassert>

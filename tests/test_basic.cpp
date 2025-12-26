@@ -1,8 +1,8 @@
 #include "dkv_core.hpp"
-#include "dkv_storage.hpp"
-#include "dkv_network.hpp"
+#include "storage/dkv_storage.hpp"
+#include "net/dkv_network.hpp"
 #include "dkv_server.hpp"
-#include "dkv_datatype_string.hpp"
+#include "datatypes/dkv_datatype_string.hpp"
 #include "test_runner.hpp"
 #include <iostream>
 #include <cassert>

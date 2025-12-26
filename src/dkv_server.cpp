@@ -1,11 +1,11 @@
 #include "dkv_server.hpp"
 #include "dkv_memory_allocator.hpp"
 #include "dkv_logger.hpp"
-#include "dkv_raft.h"
-#include "dkv_raft_network.h"
-#include "dkv_raft_statemachine.h"
-#include "dkv_raft_persist.h"
-#include "dkv_shard.hpp"
+#include "multinode/raft/dkv_raft.hpp"
+#include "multinode/raft/dkv_raft_network.hpp"
+#include "multinode/raft/dkv_raft_statemachine.hpp"
+#include "multinode/raft/dkv_raft_persist.hpp"
+#include "multinode/shard/dkv_shard.hpp"
 #include <iostream>
 #include <fstream>
 #include <sstream>

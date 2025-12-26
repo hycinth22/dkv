@@ -1,7 +1,7 @@
 #include "dkv_command_handler.hpp"
 #include "dkv_server.hpp"
 #include "dkv_logger.hpp"
-#include "dkv_resp.hpp"
+#include "net/dkv_resp.hpp"
 #include "dkv_datatypes.hpp"
 
 #include <thread>

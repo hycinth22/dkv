@@ -4,7 +4,7 @@
 #include <vector>
 #include <thread>
 #include "dkv_core.hpp"
-#include "dkv_storage.hpp"
+#include "storage/dkv_storage.hpp"
 
 void testSetBasicOperations() {
     std::cout << "测试集合基本操作..." << std::endl;

@@ -1,5 +1,5 @@
 #include <gtest/gtest.h>
-#include "dkv_consistent_hash.hpp"
+#include "multinode/shard/dkv_consistent_hash.hpp"
 
 using namespace dkv;
 

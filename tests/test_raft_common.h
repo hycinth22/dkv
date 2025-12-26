@@ -1,10 +1,10 @@
 #pragma once
 
 #include "dkv_logger.hpp"
-#include "dkv_raft.h"
-#include "dkv_raft_network.h"
-#include "dkv_raft_statemachine.h"
-#include "dkv_raft_persist.h"
+#include "multinode/raft/dkv_raft.hpp"
+#include "multinode/raft/dkv_raft_network.hpp"
+#include "multinode/raft/dkv_raft_statemachine.hpp"
+#include "multinode/raft/dkv_raft_persist.hpp"
 #include "test_runner.hpp"
 #include <iostream>
 #include <vector>

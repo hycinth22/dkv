@@ -2,8 +2,8 @@
 #define DKV_COMMAND_HANDLER_HPP
 
 #include "dkv_core.hpp"
-#include "dkv_storage.hpp"
-#include "dkv_aof.hpp"
+#include "storage/dkv_storage.hpp"
+#include "persist/dkv_aof.hpp"
 #include <memory>
 
 namespace dkv {

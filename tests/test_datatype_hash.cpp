@@ -1,5 +1,5 @@
-#include "dkv_datatype_hash.hpp"
-#include "dkv_storage.hpp"
+#include "datatypes/dkv_datatype_hash.hpp"
+#include "storage/dkv_storage.hpp"
 #include "dkv_core.hpp"
 #include "dkv_utils.hpp"
 #include "test_runner.hpp"

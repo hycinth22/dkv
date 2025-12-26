@@ -1,6 +1,6 @@
 #include "dkv_worker_pool.hpp"
 #include "dkv_core.hpp"
-#include "dkv_network.hpp"
+#include "net/dkv_network.hpp"
 #include "dkv_server.hpp"
 #include "dkv_logger.hpp"
 #include <stdexcept>
