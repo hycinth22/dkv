@@ -1,8 +1,7 @@
 #include "multinode/shard/dkv_consistent_hash.hpp"
 #include <algorithm>
 #include <cstring>
-#include <openssl/md5.h>
-#include <openssl/sha.h>
+#include <stdexcept>
 
 namespace dkv {
 
