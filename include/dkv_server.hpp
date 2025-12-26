@@ -8,6 +8,12 @@
 #include "dkv_transaction.hpp"
 #include "dkv_transaction_manager.hpp"
 #include "dkv_raft.h"
+
+// 前置声明
+namespace dkv {
+    class ShardManager;
+    struct ShardConfig;
+}
 #include <memory>
 #include <thread>
 #include <atomic>
@@ -79,6 +85,10 @@ private:
     std::shared_ptr<dkv::RaftStateMachineManager> raft_state_machine_; // RAFT状态机
     std::shared_ptr<dkv::RaftPersister> raft_persister_; // RAFT持久化
     std::shared_ptr<dkv::RaftNetwork> raft_network_; // RAFT网络
+    
+    // 分片相关配置
+    std::unique_ptr<ShardManager> shard_manager_; // 分片管理器
+    std::unique_ptr<ShardConfig> shard_config_; // 分片配置
 
 public:
     DKVServer(int port = 6379, size_t num_sub_reactors = 4, size_t num_workers = 8);

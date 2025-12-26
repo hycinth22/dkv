@@ -5,6 +5,7 @@
 #include "dkv_raft_network.h"
 #include "dkv_raft_statemachine.h"
 #include "dkv_raft_persist.h"
+#include "dkv_shard.hpp"
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -179,6 +180,13 @@ void DKVServer::stop() {
             raft_->Stop();
             raft_.reset();
         }
+    }
+    
+    // 停止分片管理器（如果存在）
+    DKV_LOG_INFO("停止分片管理器");
+    if (shard_manager_) {
+        shard_manager_->Stop();
+        shard_manager_.reset();
     }
     
     DKV_LOG_INFO("DKV服务已停止");
@@ -498,6 +506,25 @@ bool DKVServer::initialize() {
         DKV_LOG_INFO("RAFT组件初始化完成，节点ID: ", raft_node_id_, ", 总节点数: ", total_raft_nodes_);
     }
     
+    // 初始化分片管理器
+    DKV_LOG_INFO("初始化分片管理器");
+    shard_manager_ = make_unique<ShardManager>(this);
+    
+    // 初始化分片配置
+    shard_config_ = std::make_unique<ShardConfig>();
+    shard_config_->enable_sharding = false; // 默认禁用分片
+    shard_config_->num_shards = 1;
+    shard_config_->hash_type = HashFunctionType::MD5;
+    shard_config_->num_virtual_nodes = 100;
+    shard_config_->heartbeat_interval_ms = 1000;
+    shard_config_->migration_batch_size = 1000;
+    shard_config_->max_concurrent_migrations = 2;
+    shard_config_->failover_timeout_ms = 5000;
+    
+    // 初始化并启动分片管理器
+    shard_manager_->Initialize(*shard_config_);
+    shard_manager_->Start();
+    
     DKV_LOG_INFO("DKV服务器初始化完成");
     return true;
 }
@@ -544,6 +571,12 @@ Response DKVServer::executeCommand(const Command& command, TransactionID tx_id) 
             return commit_response;
         }
         tx_id = NO_TX;
+    }
+    
+    // 检查是否启用了分片功能
+    if (shard_config_ && shard_config_->enable_sharding) {
+        // 使用分片管理器处理命令
+        return shard_manager_->HandleCommand(command, tx_id);
     }
     
     // 检查是否是只读命令，用于内存管理和Raft集成
