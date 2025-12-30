@@ -161,6 +161,9 @@ bool testRaftStateMachineLeaderFailure() {
     
     // 检查所有状态机的计数器值
     for (int i = 0; i < 3; i++) {
+        if (i == leader) {
+            continue;
+        }
         auto sm = dynamic_pointer_cast<MockRaftStateMachine>(test.GetStateMachine(i));
         ASSERT_EQ(sm->GetCounter(), 2);
     }

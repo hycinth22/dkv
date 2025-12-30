@@ -37,7 +37,7 @@ public:
             }
             
             auto network = make_shared<MockRaftNetwork>(this, i);
-            auto state_machine = make_shared<MockRaftStateMachine>();
+            auto state_machine = make_shared<MockRaftStateMachine>(i);
             auto persister = make_shared<RaftFilePersister>("./test_raft_data" + to_string(i));
             
             auto raft = make_shared<Raft>(i, peers, persister, network, state_machine);
@@ -223,13 +223,13 @@ private:
 // 模拟的RAFT状态机实现，用于测试
 class MockRaftStateMachine : public RaftStateMachine {
 public:
-    MockRaftStateMachine() : snapshot_calls_(0), restore_calls_(0), counter_(0) {
+    MockRaftStateMachine(int me) : me_(me), snapshot_calls_(0), restore_calls_(0), counter_(0) {
     }
 
     // 执行命令并返回结果   
     Response DoOp(const RaftCommand& command) override {
-        //DKV_LOG_INFOF("MockRaftStateMachine::DoOp: {}", command.db_command.desc());
-        //DKV_LOG_INFOF("MockRaftStateMachine::DoOp: counter_ = {}", counter_);
+        //DKV_LOG_INFOF("[Node {}] MockRaftStateMachine::DoOp: {}", me_, command.db_command.desc());
+        //DKV_LOG_INFOF("[Node {}] MockRaftStateMachine::DoOp: counter_ = {}", me_, counter_);
         // 处理计数器命令
         if (!command.db_command.args.empty()) {
             switch (command.db_command.args[0][0]) {
@@ -244,7 +244,7 @@ public:
                     break;
             }
         }
-        //DKV_LOG_INFOF("MockRaftStateMachine::DoOp: counter_ = {}", counter_);
+        //DKV_LOG_INFOF("[Node {}] MockRaftStateMachine::DoOp: counter_ = {}", me_, counter_);
         return Response(ResponseStatus::OK, "", "OK");
     }
 
@@ -293,6 +293,7 @@ private:
     int snapshot_calls_;
     int restore_calls_;
     int counter_;
+    int me_;
 };
 
 // 模拟的RAFT网络实现，用于测试

@@ -22,12 +22,13 @@ namespace dkv {
 // 测试Raft构造函数和基本状态
 bool testRaftConstructor() {
     vector<string> peers = {"127.0.0.1:12345", "127.0.0.1:12346", "127.0.0.1:12347"};
+    int me = 0;
     auto network = make_shared<MockRaftNetwork>();
-    auto state_machine = make_shared<MockRaftStateMachine>();
+    auto state_machine = make_shared<MockRaftStateMachine>(me);
     auto persister = make_shared<RaftFilePersister>("./test_raft_data");
 
     // 创建Raft实例
-    Raft raft(0, peers, persister, network, state_machine);
+    Raft raft(me, peers, persister, network, state_machine);
 
     // 检查初始状态
     assert(raft.GetState() == RaftState::FOLLOWER);
@@ -40,12 +41,13 @@ bool testRaftConstructor() {
 // 测试Raft状态转换
 bool testRaftStateTransition() {
     vector<string> peers = {"127.0.0.1:12345"};
+    int me = 0;
     auto network = make_shared<MockRaftNetwork>();
-    auto state_machine = make_shared<MockRaftStateMachine>();
+    auto state_machine = make_shared<MockRaftStateMachine>(me);
     auto persister = make_shared<RaftFilePersister>("./test_raft_data");
 
     // 创建Raft实例
-    Raft raft(0, peers, persister, network, state_machine);
+    Raft raft(me, peers, persister, network, state_machine);
 
     // 检查初始状态
     assert(raft.GetState() == RaftState::FOLLOWER);
@@ -58,6 +60,7 @@ bool testRaftStateTransition() {
 
     // 检查状态是否变为候选人或领导者
     RaftState state = raft.GetState();
+
     assert(state == RaftState::CANDIDATE || state == RaftState::LEADER);
 
     // 停止Raft
@@ -69,12 +72,13 @@ bool testRaftStateTransition() {
 // 测试Raft日志复制
 bool testRaftLogReplication() {
     vector<string> peers = {"127.0.0.1:12345", "127.0.0.1:12346", "127.0.0.1:12347"};
+    int me = 0;
     auto network = make_shared<MockRaftNetwork>();
-    auto state_machine = make_shared<MockRaftStateMachine>();
+    auto state_machine = make_shared<MockRaftStateMachine>(me);
     auto persister = make_shared<RaftFilePersister>("./test_raft_data");
 
     // 创建Raft实例
-    Raft raft(0, peers, persister, network, state_machine);
+    Raft raft(me, peers, persister, network, state_machine);
 
     // 启动Raft
     raft.Start();
@@ -102,12 +106,13 @@ bool testRaftLogReplication() {
 // 测试Raft快照创建
 bool testRaftSnapshot() {
     vector<string> peers = {"127.0.0.1:12345"};
+    int me = 0;
     auto network = make_shared<MockRaftNetwork>();
-    auto state_machine = make_shared<MockRaftStateMachine>();
+    auto state_machine = make_shared<MockRaftStateMachine>(me);
     auto persister = make_shared<RaftFilePersister>("./test_raft_data");
 
     // 创建Raft实例
-    Raft raft(0, peers, persister, network, state_machine);
+    Raft raft(me, peers, persister, network, state_machine);
 
     // 启动Raft
     raft.Start();
@@ -128,12 +133,13 @@ bool testRaftSnapshot() {
 // 测试Raft持久化
 bool testRaftPersist() {
     vector<string> peers = {"127.0.0.1:12345"};
+    int me = 0;
     auto network = make_shared<MockRaftNetwork>();
-    auto state_machine = make_shared<MockRaftStateMachine>();
+    auto state_machine = make_shared<MockRaftStateMachine>(me);
     auto persister = make_shared<RaftFilePersister>("./test_raft_data");
 
     // 创建Raft实例
-    Raft raft(0, peers, persister, network, state_machine);
+    Raft raft(me, peers, persister, network, state_machine);
 
     // 启动Raft
     raft.Start();
@@ -173,12 +179,13 @@ bool testRaftStateMachineManager() {
 // 测试AppendEntries日志验证逻辑
 bool testRaftAppendEntriesValidation() {
     vector<string> peers = {"127.0.0.1:12345"};
+    int me = 0;
     auto network = make_shared<MockRaftNetwork>();
-    auto state_machine = make_shared<MockRaftStateMachine>();
+    auto state_machine = make_shared<MockRaftStateMachine>(me);
     auto persister = make_shared<RaftFilePersister>("./test_raft_data");
 
     // 创建Raft实例
-    Raft raft(0, peers, persister, network, state_machine);
+    Raft raft(me, peers, persister, network, state_machine);
     
     // 测试1: 合法的日志条目 - 第一条日志索引等于prevLogIndex+1
     {
@@ -287,12 +294,13 @@ bool testRaftAppendEntriesValidation() {
 // 测试OnInstallSnapshot方法
 bool testRaftInstallSnapshot() {
     vector<string> peers = {"127.0.0.1:12345"};
+    int me = 0;
     auto network = make_shared<MockRaftNetwork>();
-    auto state_machine = make_shared<MockRaftStateMachine>();
+    auto state_machine = make_shared<MockRaftStateMachine>(me);
     auto persister = make_shared<RaftFilePersister>("./test_raft_data");
 
     // 创建Raft实例
-    Raft raft(0, peers, persister, network, state_machine);
+    Raft raft(me, peers, persister, network, state_machine);
     
     // 准备快照请求
     InstallSnapshotRequest request;
@@ -318,12 +326,13 @@ bool testRaftInstallSnapshot() {
 // 测试多个命令连续提交
 bool testRaftContinuousCommands() {
     vector<string> peers = {"127.0.0.1:12345"};
+    int me = 0;
     auto network = make_shared<MockRaftNetwork>();
-    auto state_machine = make_shared<MockRaftStateMachine>();
+    auto state_machine = make_shared<MockRaftStateMachine>(me);
     auto persister = make_shared<RaftFilePersister>("./test_raft_data");
 
     // 创建Raft实例
-    Raft raft(0, peers, persister, network, state_machine);
+    Raft raft(me, peers, persister, network, state_machine);
     
     // 启动Raft
     raft.Start();
@@ -355,12 +364,13 @@ bool testRaftContinuousCommands() {
 // 测试领导者选举详细逻辑
 bool testRaftLeaderElection() {
     vector<string> peers = {"127.0.0.1:12345", "127.0.0.1:12346", "127.0.0.1:12347"};
+    int me = 0;
     auto network = make_shared<MockRaftNetwork>();
-    auto state_machine = make_shared<MockRaftStateMachine>();
+    auto state_machine = make_shared<MockRaftStateMachine>(me);
     auto persister = make_shared<RaftFilePersister>("./test_raft_data");
 
     // 创建Raft实例
-    Raft raft(0, peers, persister, network, state_machine);
+    Raft raft(me, peers, persister, network, state_machine);
     
     // 启动Raft
     raft.Start();
@@ -853,6 +863,7 @@ bool testRaftLeaderPartition() {
     
     // 检查状态机计数器值
     for (int i = 0; i < 3; i++) {
+        // cout << "  节点 " << i << " 计数器值: " << test.GetStateMachine(i)->GetCounter() << endl;
         if (i != leader) { // 排除已停止的领导者
             auto sm = dynamic_pointer_cast<MockRaftStateMachine>(test.GetStateMachine(i));
             ASSERT_EQ(sm->GetCounter(), 2); // 初始命令 + 新命令
