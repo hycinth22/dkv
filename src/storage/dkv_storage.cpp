@@ -6,7 +6,6 @@
 #include <algorithm>
 #include <mutex>
 #include <cassert>
-// todo: fix lock
 using namespace std;
 
 namespace dkv {
@@ -25,17 +24,20 @@ ReadView StorageEngine::getReadView(TransactionID tx_id) const {
 
 // StorageEngine 实现
 bool StorageEngine::set(TransactionID tx_id, const Key& key, const Value& value) {
+    auto lock = inner_storage_.wlock();
     auto item = createStringItem(value);
     return inner_storage_.set(tx_id, key, std::move(item));
 }
 
 bool StorageEngine::set(TransactionID tx_id, const Key& key, const Value& value, int64_t expire_seconds) {
+    auto lock = inner_storage_.wlock();
     auto expire_time = Utils::getCurrentTime() + std::chrono::seconds(expire_seconds);
     auto item = createStringItem(value, expire_time);
     return inner_storage_.set(tx_id, key, std::move(item));
 }
 
 std::string StorageEngine::get(TransactionID tx_id, const Key& key) {
+    auto lock = inner_storage_.rlock();
     auto item = inner_storage_.get(key, getReadView(tx_id));
     if (!item || item->isExpired()) {
         return "";
@@ -52,10 +54,12 @@ std::string StorageEngine::get(TransactionID tx_id, const Key& key) {
 }
 
 bool StorageEngine::del(TransactionID tx_id, const Key& key) {
+    auto lock = inner_storage_.wlock();
     return inner_storage_.del(tx_id, key);
 }
 
 bool StorageEngine::exists(TransactionID tx_id, const Key& key) {
+    auto lock = inner_storage_.rlock();
     auto item = inner_storage_.get(key, getReadView(tx_id));
     if (!item || item->isExpired()) {
         return false;
@@ -68,6 +72,7 @@ bool StorageEngine::exists(TransactionID tx_id, const Key& key) {
 }
 
 bool StorageEngine::expire(TransactionID tx_id, const Key& key, int64_t seconds) {
+    auto lock = inner_storage_.wlock();
     auto item = inner_storage_.get(key, getReadView(tx_id));
     if (!item || item->isExpired()) {
         return false;
@@ -79,6 +84,7 @@ bool StorageEngine::expire(TransactionID tx_id, const Key& key, int64_t seconds)
 }
 
 int64_t StorageEngine::ttl(TransactionID tx_id, const Key& key) {
+    auto lock = inner_storage_.rlock();
     auto item = inner_storage_.get(key, getReadView(tx_id));
     if (!item || item->isExpired()) {
         return -2; // 键不存在
@@ -95,6 +101,7 @@ int64_t StorageEngine::ttl(TransactionID tx_id, const Key& key) {
 }
 
 int64_t StorageEngine::incr(TransactionID tx_id, const Key& key) {
+    auto lock = inner_storage_.wlock();
     auto item = inner_storage_.get(key, getReadView(tx_id));
     if (!item || item->isExpired()) {
         // 键不存在，创建新的数值项
@@ -120,6 +127,7 @@ int64_t StorageEngine::incr(TransactionID tx_id, const Key& key) {
 }
 
 int64_t StorageEngine::decr(TransactionID tx_id, const Key& key) {
+    auto lock = inner_storage_.wlock();
     auto item = inner_storage_.get(key, getReadView(tx_id));
     if (!item || item->isExpired()) {
         // 键不存在，创建新的数值项
@@ -329,6 +337,7 @@ std::unique_ptr<DataItem> StorageEngine::createBitmapItem(Timestamp expire_time)
 }
 
 bool StorageEngine::hset(TransactionID tx_id, const Key& key, const Value& field, const Value& value) {
+    auto lock = inner_storage_.wlock();
     DataItem* item = getDataItem(tx_id, key);
     if (!item || item->isExpired()) {
         // 键不存在，创建新的哈希项
@@ -350,6 +359,7 @@ bool StorageEngine::hset(TransactionID tx_id, const Key& key, const Value& field
 }
 
 std::string StorageEngine::hget(TransactionID tx_id, const Key& key, const Value& field) {
+    auto lock = inner_storage_.rlock();
     // 使用getDataItem方法获取数据项
     DataItem* item = getDataItem(tx_id, key);
     if (!item || item->isExpired()) {
@@ -372,6 +382,7 @@ std::string StorageEngine::hget(TransactionID tx_id, const Key& key, const Value
 }
 
 std::vector<std::pair<Value, Value>> StorageEngine::hgetall(TransactionID tx_id, const Key& key) {
+    auto lock = inner_storage_.rlock();
     // 使用getDataItem方法获取数据项
     DataItem* item = getDataItem(tx_id, key);
     if (!item || item->isExpired()) {
@@ -391,6 +402,7 @@ std::vector<std::pair<Value, Value>> StorageEngine::hgetall(TransactionID tx_id,
 }
 
 bool StorageEngine::hdel(TransactionID tx_id, const Key& key, const Value& field) {
+    auto lock = inner_storage_.wlock();
     // 使用getDataItem方法获取数据项
     DataItem* item = getDataItem(tx_id, key);
     if (!item || item->isExpired()) {
@@ -407,6 +419,7 @@ bool StorageEngine::hdel(TransactionID tx_id, const Key& key, const Value& field
 }
 
 bool StorageEngine::hexists(TransactionID tx_id, const Key& key, const Value& field) {
+    auto lock = inner_storage_.rlock();
     DataItem* item = getDataItem(tx_id, key);
     if (!item || item->isExpired()) {
         return false;
@@ -421,6 +434,7 @@ bool StorageEngine::hexists(TransactionID tx_id, const Key& key, const Value& fi
 }
 
 std::vector<Value> StorageEngine::hkeys(TransactionID tx_id, const Key& key) {
+    auto lock = inner_storage_.rlock();
     DataItem* item = getDataItem(tx_id, key);
     if (!item || item->isExpired()) {
         return {};
@@ -438,6 +452,7 @@ std::vector<Value> StorageEngine::hkeys(TransactionID tx_id, const Key& key) {
 }
 
 std::vector<Value> StorageEngine::hvals(TransactionID tx_id, const Key& key) {
+    auto lock = inner_storage_.rlock();
     DataItem* item = getDataItem(tx_id, key);
     if (!item || item->isExpired()) {
         return {};
@@ -455,6 +470,7 @@ std::vector<Value> StorageEngine::hvals(TransactionID tx_id, const Key& key) {
 }
 
 size_t StorageEngine::hlen(TransactionID tx_id, const Key& key) {
+    auto lock = inner_storage_.rlock();
     DataItem* item = getDataItem(tx_id, key);
     if (!item || item->isExpired()) {
         return 0;
@@ -469,6 +485,7 @@ size_t StorageEngine::hlen(TransactionID tx_id, const Key& key) {
 }
 
 size_t StorageEngine::lpush(TransactionID tx_id, const Key& key, const Value& value) {
+    auto lock = inner_storage_.wlock();
     DataItem* item = getDataItem(tx_id, key);
     if (!item || item->isExpired()) {
         // 键不存在，创建新的列表项
@@ -493,6 +510,7 @@ size_t StorageEngine::lpush(TransactionID tx_id, const Key& key, const Value& va
 }
 
 size_t StorageEngine::rpush(TransactionID tx_id, const Key& key, const Value& value) {
+    auto lock = inner_storage_.wlock();
     DataItem* item = getDataItem(tx_id, key);
     if (!item || item->isExpired()) {
         // 键不存在，创建新的列表项
@@ -517,6 +535,7 @@ size_t StorageEngine::rpush(TransactionID tx_id, const Key& key, const Value& va
 }
 
 std::string StorageEngine::lpop(TransactionID tx_id, const Key& key) {
+    auto lock = inner_storage_.wlock();
     DataItem* item = getDataItem(tx_id, key);
     if (!item || item->isExpired()) {
         return "";
@@ -539,6 +558,7 @@ std::string StorageEngine::lpop(TransactionID tx_id, const Key& key) {
 }
 
 std::string StorageEngine::rpop(TransactionID tx_id, const Key& key) {
+    auto lock = inner_storage_.wlock();
     DataItem* item = getDataItem(tx_id, key);
     if (!item || item->isExpired()) {
         return "";
@@ -561,6 +581,7 @@ std::string StorageEngine::rpop(TransactionID tx_id, const Key& key) {
 }
 
 size_t StorageEngine::llen(TransactionID tx_id, const Key& key) {
+    auto lock = inner_storage_.rlock();
     DataItem* item = getDataItem(tx_id, key);
     if (!item || item->isExpired()) {
         return 0;
@@ -575,6 +596,7 @@ size_t StorageEngine::llen(TransactionID tx_id, const Key& key) {
 }
 
 std::vector<Value> StorageEngine::lrange(TransactionID tx_id, const Key& key, size_t start, size_t stop) {
+    auto lock = inner_storage_.rlock();
     DataItem* item = getDataItem(tx_id, key);
     if (!item || item->isExpired()) {
         return {};
@@ -643,6 +665,7 @@ std::unique_ptr<DataItem> DataItemFactory::create(DataType type, const std::stri
 }
 
 size_t StorageEngine::sadd(TransactionID tx_id, const Key& key, const std::vector<Value>& members) {
+    auto lock = inner_storage_.wlock();
     DataItem* item = getDataItem(tx_id, key);
     if (!item || item->isExpired()) {
         // 键不存在，创建新的集合项
@@ -667,6 +690,7 @@ size_t StorageEngine::sadd(TransactionID tx_id, const Key& key, const std::vecto
 }
 
 size_t StorageEngine::srem(TransactionID tx_id, const Key& key, const std::vector<Value>& members) {
+    auto lock = inner_storage_.wlock();
     DataItem* item = getDataItem(tx_id, key);
     if (!item || item->isExpired()) {
         return 0; // 键不存在
@@ -683,6 +707,7 @@ size_t StorageEngine::srem(TransactionID tx_id, const Key& key, const std::vecto
 }
 
 std::vector<Value> StorageEngine::smembers(TransactionID tx_id, const Key& key) {
+    auto lock = inner_storage_.rlock();
     DataItem* item = getDataItem(tx_id, key);
     if (!item || item->isExpired()) {
         return {};
@@ -697,6 +722,7 @@ std::vector<Value> StorageEngine::smembers(TransactionID tx_id, const Key& key) 
 }
 
 bool StorageEngine::sismember(TransactionID tx_id, const Key& key, const Value& member) {
+    auto lock = inner_storage_.rlock();
     DataItem* item = getDataItem(tx_id, key);
     if (!item || item->isExpired()) {
         return false;
@@ -711,6 +737,7 @@ bool StorageEngine::sismember(TransactionID tx_id, const Key& key, const Value& 
 }
 
 size_t StorageEngine::scard(TransactionID tx_id, const Key& key) {
+    auto lock = inner_storage_.rlock();
     DataItem* item = getDataItem(tx_id, key);
     if (!item || item->isExpired()) {
         return 0;
@@ -746,6 +773,7 @@ void StorageEngine::setDataItem(const Key& key, std::unique_ptr<DataItem> item) 
 }
 
 size_t StorageEngine::zadd(TransactionID tx_id, const Key& key, const std::vector<std::pair<Value, double>>& members_with_scores) {
+    auto lock = inner_storage_.wlock();
     DataItem* item = getDataItem(tx_id, key);
     if (!item || item->isExpired()) {
         // 键不存在，创建新的有序集合项
@@ -770,6 +798,7 @@ size_t StorageEngine::zadd(TransactionID tx_id, const Key& key, const std::vecto
 }
 
 size_t StorageEngine::zrem(TransactionID tx_id, const Key& key, const std::vector<Value>& members) {
+    auto lock = inner_storage_.wlock();
     DataItem* item = getDataItem(tx_id, key);
     if (!item || item->isExpired()) {
         return 0; // 键不存在
@@ -786,6 +815,7 @@ size_t StorageEngine::zrem(TransactionID tx_id, const Key& key, const std::vecto
 }
 
 bool StorageEngine::zscore(TransactionID tx_id, const Key& key, const Value& member, double& score) {
+    auto lock = inner_storage_.rlock();
     DataItem* item = getDataItem(tx_id, key);
     if (!item || item->isExpired()) {
         return false;
@@ -800,6 +830,7 @@ bool StorageEngine::zscore(TransactionID tx_id, const Key& key, const Value& mem
 }
 
 bool StorageEngine::zismember(TransactionID tx_id, const Key& key, const Value& member) {
+    auto lock = inner_storage_.rlock();
     DataItem* item = getDataItem(tx_id, key);
     if (!item || item->isExpired()) {
         return false;
@@ -814,6 +845,7 @@ bool StorageEngine::zismember(TransactionID tx_id, const Key& key, const Value& 
 }
 
 bool StorageEngine::zrank(TransactionID tx_id, const Key& key, const Value& member, size_t& rank) {
+    auto lock = inner_storage_.rlock();
     DataItem* item = getDataItem(tx_id, key);
     if (!item || item->isExpired()) {
         return false;
@@ -828,6 +860,7 @@ bool StorageEngine::zrank(TransactionID tx_id, const Key& key, const Value& memb
 }
 
 bool StorageEngine::zrevrank(TransactionID tx_id, const Key& key, const Value& member, size_t& rank) {
+    auto lock = inner_storage_.rlock();
     DataItem* item = getDataItem(tx_id, key);
     if (!item || item->isExpired()) {
         return false;
@@ -842,6 +875,7 @@ bool StorageEngine::zrevrank(TransactionID tx_id, const Key& key, const Value& m
 }
 
 std::vector<std::pair<Value, double>> StorageEngine::zrange(TransactionID tx_id, const Key& key, size_t start, size_t stop) {
+    auto lock = inner_storage_.rlock();
     DataItem* item = getDataItem(tx_id, key);
     if (!item || item->isExpired()) {
         return {};
@@ -856,6 +890,7 @@ std::vector<std::pair<Value, double>> StorageEngine::zrange(TransactionID tx_id,
 }
 
 std::vector<std::pair<Value, double>> StorageEngine::zrevrange(TransactionID tx_id, const Key& key, size_t start, size_t stop) {
+    auto lock = inner_storage_.rlock();
     DataItem* item = getDataItem(tx_id, key);
     if (!item || item->isExpired()) {
         return {};
@@ -870,6 +905,7 @@ std::vector<std::pair<Value, double>> StorageEngine::zrevrange(TransactionID tx_
 }
 
 std::vector<std::pair<Value, double>> StorageEngine::zrangebyscore(TransactionID tx_id, const Key& key, double min, double max) {
+    auto lock = inner_storage_.rlock();
     DataItem* item = getDataItem(tx_id, key);
     if (!item || item->isExpired()) {
         return {};
@@ -884,6 +920,7 @@ std::vector<std::pair<Value, double>> StorageEngine::zrangebyscore(TransactionID
 }
 
 std::vector<std::pair<Value, double>> StorageEngine::zrevrangebyscore(TransactionID tx_id, const Key& key, double max, double min) {
+    auto lock = inner_storage_.rlock();
     DataItem* item = getDataItem(tx_id, key);
     if (!item || item->isExpired()) {
         return {};
@@ -898,6 +935,7 @@ std::vector<std::pair<Value, double>> StorageEngine::zrevrangebyscore(Transactio
 }
 
 size_t StorageEngine::zcount(TransactionID tx_id, const Key& key, double min, double max) {
+    auto lock = inner_storage_.rlock();
     DataItem* item = getDataItem(tx_id, key);
     if (!item || item->isExpired()) {
         return 0;
@@ -911,6 +949,7 @@ size_t StorageEngine::zcount(TransactionID tx_id, const Key& key, double min, do
 }
 
 size_t StorageEngine::zcard(TransactionID tx_id, const Key& key) {
+    auto lock = inner_storage_.rlock();
     DataItem* item = getDataItem(tx_id, key);
     if (!item || item->isExpired()) {
         return 0;
@@ -925,6 +964,7 @@ size_t StorageEngine::zcard(TransactionID tx_id, const Key& key) {
 
 // 位图操作实现
 bool StorageEngine::setBit(TransactionID tx_id, const Key& key, size_t offset, bool value) {
+    auto lock = inner_storage_.wlock();
     DataItem* item = getDataItem(tx_id, key);
     if (!item || item->isExpired()) {
         // 键不存在，创建新的位图项
@@ -948,6 +988,7 @@ bool StorageEngine::setBit(TransactionID tx_id, const Key& key, size_t offset, b
 }
 
 bool StorageEngine::getBit(TransactionID tx_id, const Key& key, size_t offset) {
+    auto lock = inner_storage_.rlock();
     DataItem* item = getDataItem(tx_id, key);
     if (!item || item->isExpired()) {
         return false;
@@ -962,6 +1003,7 @@ bool StorageEngine::getBit(TransactionID tx_id, const Key& key, size_t offset) {
 }
 
 size_t StorageEngine::bitCount(TransactionID tx_id, const Key& key) {
+    auto lock = inner_storage_.rlock();
     DataItem* item = getDataItem(tx_id, key);
     if (!item || item->isExpired()) {
         return 0;
@@ -976,6 +1018,7 @@ size_t StorageEngine::bitCount(TransactionID tx_id, const Key& key) {
 }
 
 size_t StorageEngine::bitCount(TransactionID tx_id, const Key& key, size_t start, size_t end) {
+    auto lock = inner_storage_.rlock();
     DataItem* item = getDataItem(tx_id, key);
     if (!item || item->isExpired()) {
         return 0;
@@ -990,6 +1033,7 @@ size_t StorageEngine::bitCount(TransactionID tx_id, const Key& key, size_t start
 }
 
 bool StorageEngine::bitOp(TransactionID tx_id, const std::string& operation, const Key& destkey, const std::vector<Key>& keys) {
+    auto lock = inner_storage_.wlock();
     // 检查源键是否都存在且未过期且都是位图类型
     std::vector<BitmapItem*> bitmap_items;
     for (const auto& key : keys) {
@@ -1030,6 +1074,7 @@ bool StorageEngine::bitOp(TransactionID tx_id, const std::string& operation, con
 
 // HyperLogLog操作实现
 bool StorageEngine::pfadd(TransactionID tx_id, const Key& key, const std::vector<Value>& elements) {
+    auto lock = inner_storage_.wlock();
     DataItem* item = getDataItem(tx_id, key);
     if (!item || item->isExpired()) {
         // 键不存在，创建新的HyperLogLog项
@@ -1065,6 +1110,7 @@ bool StorageEngine::pfadd(TransactionID tx_id, const Key& key, const std::vector
 }
 
 uint64_t StorageEngine::pfcount(TransactionID tx_id, const Key& key) {
+    auto lock = inner_storage_.rlock();
     // 使用getDataItem方法获取数据项，它会处理MVCC
     DataItem* item = getDataItem(tx_id, key);
     if (!item || item->isExpired()) {
@@ -1080,6 +1126,7 @@ uint64_t StorageEngine::pfcount(TransactionID tx_id, const Key& key) {
 }
 
 bool StorageEngine::pfmerge(TransactionID tx_id, const Key& destkey, const std::vector<Key>& sourcekeys) {
+    auto lock = inner_storage_.wlock();
     // 检查源键是否都存在且未过期且都是HyperLogLog类型
     std::vector<HyperLogLogItem*> hll_items;
     for (const auto& key : sourcekeys) {

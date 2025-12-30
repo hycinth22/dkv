@@ -13,7 +13,6 @@ namespace dkv {
 
 // 获取指定事务可见的版本
 DataItem* MVCC::get(const ReadView& read_view, const Key& key) const{
-    auto readlock = inner_storage_.rlock();
     // 查找键
     auto it = inner_storage_.find(key);
     if (it == inner_storage_.end()) {
@@ -54,8 +53,6 @@ DataItem* MVCC::get(const ReadView& read_view, const Key& key) const{
 
 // 设置键值，并记录到UNDOLOG
 bool MVCC::set(TransactionID tx_id, const Key& key, unique_ptr<DataItem> item) {
-    auto writelock = inner_storage_.wlock();
-
     unique_ptr<DataItem>& entry = inner_storage_.getRefOrInsert(key);
 
     // 保存旧值到UndoLog
@@ -76,8 +73,6 @@ bool MVCC::set(TransactionID tx_id, const Key& key, unique_ptr<DataItem> item) {
 
 // 删除键，并记录到UNDOLOG
 bool MVCC::del(TransactionID tx_id, const Key& key) {
-    auto writelock = inner_storage_.wlock();
-
     unique_ptr<DataItem>& entry = inner_storage_.getRefOrInsert(key);
 
     // 保存旧值到UndoLog
