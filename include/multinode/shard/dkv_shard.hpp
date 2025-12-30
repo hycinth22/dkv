@@ -45,6 +45,9 @@ struct ShardConfig {
     int migration_batch_size;   // 迁移批次大小
     int max_concurrent_migrations; // 最大并发迁移数
     int failover_timeout_ms;    // 故障转移超时时间（毫秒）
+    bool enable_auto_migration; // 是否启用自动迁移
+    int health_check_interval_ms; // 健康检查间隔（毫秒）
+    int monitoring_interval_ms; // 监控间隔（毫秒）
 };
 
 // 分片迁移任务结构体

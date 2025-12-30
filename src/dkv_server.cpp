@@ -22,7 +22,11 @@ DKVServer::DKVServer(int port, size_t num_sub_reactors, size_t num_workers)
       rdb_changes_(0), last_save_time_(chrono::system_clock::now()), rdb_save_running_(false),
       enable_aof_(false), aof_filename_("appendonly.aof"), aof_fsync_policy_("everysec"),
       auto_aof_rewrite_percentage_(100), auto_aof_rewrite_min_size_(64 * 1024 * 1024),
-      enable_raft_(false), raft_node_id_(0), total_raft_nodes_(1), max_raft_state_(100 * 1024 * 1024) {
+      enable_raft_(false), raft_node_id_(0), total_raft_nodes_(1), max_raft_state_(100 * 1024 * 1024),
+      shard_data_dir_("./shard_data"), shard_raft_data_dir_("./shard_raft_data") {
+    
+    // 初始化默认分片配置
+    InitializeDefaultShardConfig();
 }
 
 DKVServer::~DKVServer() {
@@ -501,23 +505,31 @@ bool DKVServer::initialize() {
     }
     
     // 初始化分片管理器
-    DKV_LOG_INFO("初始化分片管理器");
-    shard_manager_ = make_unique<ShardManager>(this);
-    
-    // 初始化分片配置
-    shard_config_ = std::make_unique<ShardConfig>();
-    shard_config_->enable_sharding = false; // 默认禁用分片
-    shard_config_->num_shards = 1;
-    shard_config_->hash_type = HashFunctionType::MD5;
-    shard_config_->num_virtual_nodes = 100;
-    shard_config_->heartbeat_interval_ms = 1000;
-    shard_config_->migration_batch_size = 1000;
-    shard_config_->max_concurrent_migrations = 2;
-    shard_config_->failover_timeout_ms = 5000;
-    
-    // 初始化并启动分片管理器
-    shard_manager_->Initialize(*shard_config_);
-    shard_manager_->Start();
+    if (shard_config_ && shard_config_->enable_sharding) {
+        DKV_LOG_INFO("初始化分片管理器，启用分片功能");
+        
+        // 创建分片管理器实例
+        shard_manager_ = make_unique<ShardManager>(this);
+        
+        // 设置分片配置
+        if (shard_manager_) {
+            // 初始化分片管理器
+            if (!shard_manager_->Initialize(*shard_config_)) {
+                DKV_LOG_ERROR("分片管理器初始化失败");
+                return false;
+            }
+            
+            // 启动分片管理器
+            if (!shard_manager_->Start()) {
+                DKV_LOG_ERROR("分片管理器启动失败");
+                return false;
+            }
+            
+            DKV_LOG_INFO("分片管理器初始化完成，分片数量: ", shard_config_->num_shards);
+        }
+    } else {
+        DKV_LOG_INFO("分片功能未启用，使用单机模式");
+    }
     
     DKV_LOG_INFO("DKV服务器初始化完成");
     return true;
@@ -894,6 +906,29 @@ void DKVServer::cleanupExpiredKeys() {
     }
 }
 
+void DKVServer::InitializeDefaultShardConfig() {
+    if (!shard_config_) {
+        shard_config_ = std::make_unique<ShardConfig>();
+    }
+    
+    // 设置默认分片配置
+    shard_config_->enable_sharding = false; // 默认禁用分片
+    shard_config_->num_shards = 1;
+    shard_config_->hash_type = HashFunctionType::MD5;
+    shard_config_->num_virtual_nodes = 100;
+    shard_config_->heartbeat_interval_ms = 1000;
+    shard_config_->migration_batch_size = 1000;
+    shard_config_->max_concurrent_migrations = 2;
+    shard_config_->failover_timeout_ms = 5000;
+    shard_config_->enable_auto_migration = true;
+    shard_config_->health_check_interval_ms = 30000; // 30秒
+    shard_config_->monitoring_interval_ms = 10000; // 10秒
+    
+    // 设置默认目录
+    shard_data_dir_ = "./shard_data";
+    shard_raft_data_dir_ = "./shard_raft_data";
+}
+
 bool DKVServer::parseConfigFile(const string& config_file) {
     ifstream file(config_file);
     if (!file.is_open()) {
@@ -985,6 +1020,86 @@ bool DKVServer::parseConfigFile(const string& config_file) {
                     raft_peers_.resize(peer_id + 1);
                 }
                 raft_peers_[peer_id] = value;
+            } else if (key == "enable_sharding") {
+                // 是否启用分片功能
+                if (!shard_config_) {
+                    shard_config_ = std::make_unique<ShardConfig>();
+                    InitializeDefaultShardConfig();
+                }
+                shard_config_->enable_sharding = (value == "yes" || value == "true" || value == "1");
+            } else if (key == "shard_count") {
+                // 分片数量
+                if (!shard_config_) {
+                    shard_config_ = std::make_unique<ShardConfig>();
+                    InitializeDefaultShardConfig();
+                }
+                shard_config_->num_shards = stoi(value);
+            } else if (key == "shard_replicas") {
+                // 虚拟节点数量
+                if (!shard_config_) {
+                    shard_config_ = std::make_unique<ShardConfig>();
+                    InitializeDefaultShardConfig();
+                }
+                shard_config_->num_virtual_nodes = stoi(value);
+            } else if (key == "hash_function_type") {
+                // 哈希函数类型
+                if (!shard_config_) {
+                    shard_config_ = std::make_unique<ShardConfig>();
+                    InitializeDefaultShardConfig();
+                }
+                std::string hash_type = value;
+                transform(hash_type.begin(), hash_type.end(), hash_type.begin(), ::tolower);
+                if (hash_type == "md5") {
+                    shard_config_->hash_type = HashFunctionType::MD5;
+                } else if (hash_type == "sha1") {
+                    shard_config_->hash_type = HashFunctionType::SHA1;
+                } else if (hash_type == "murmur3") {
+                    shard_config_->hash_type = HashFunctionType::MURMUR3;
+                }
+            } else if (key == "auto_migration") {
+                // 是否自动迁移数据
+                if (!shard_config_) {
+                    shard_config_ = std::make_unique<ShardConfig>();
+                    InitializeDefaultShardConfig();
+                }
+                shard_config_->enable_auto_migration = (value == "yes" || value == "true" || value == "1");
+            } else if (key == "health_check_interval") {
+                // 健康检查间隔
+                if (!shard_config_) {
+                    shard_config_ = std::make_unique<ShardConfig>();
+                    InitializeDefaultShardConfig();
+                }
+                shard_config_->health_check_interval_ms = stoi(value) * 1000; // 转换为毫秒
+            } else if (key == "monitoring_interval") {
+                // 监控间隔
+                if (!shard_config_) {
+                    shard_config_ = std::make_unique<ShardConfig>();
+                    InitializeDefaultShardConfig();
+                }
+                shard_config_->monitoring_interval_ms = stoi(value) * 1000; // 转换为毫秒
+            } else if (key == "shard_data_dir") {
+                // 分片数据目录
+                shard_data_dir_ = value;
+            } else if (key == "shard_raft_data_dir") {
+                // 分片RAFT数据目录
+                shard_raft_data_dir_ = value;
+            } else if (key.find("shard_peer_") == 0) {
+                // 分片RAFT集群节点配置
+                // 格式: shard_peer_<shard_id>_<peer_id>
+                size_t first_underscore = key.find('_', 11); // 查找第二个下划线
+                if (first_underscore != string::npos) {
+                    int shard_id = stoi(key.substr(11, first_underscore - 11)); // 分片ID
+                    int peer_id = stoi(key.substr(first_underscore + 1)); // 节点ID
+                    
+                    // 确保分片节点数组足够大
+                    if ((size_t)shard_id >= shard_peers_.size()) {
+                        shard_peers_.resize(shard_id + 1);
+                    }
+                    if ((size_t)peer_id >= shard_peers_[shard_id].size()) {
+                        shard_peers_[shard_id].resize(peer_id + 1);
+                    }
+                    shard_peers_[shard_id][peer_id] = value;
+                }
             }
         }
     }

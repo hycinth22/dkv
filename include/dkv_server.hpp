@@ -89,6 +89,9 @@ private:
     // 分片相关配置
     std::unique_ptr<ShardManager> shard_manager_; // 分片管理器
     std::unique_ptr<ShardConfig> shard_config_; // 分片配置
+    std::string shard_data_dir_; // 分片数据目录
+    std::string shard_raft_data_dir_; // 分片RAFT数据目录
+    std::vector<std::vector<std::string>> shard_peers_; // 分片RAFT节点列表 [分片ID][节点ID]
 
 public:
     DKVServer(int port = 6379, size_t num_sub_reactors = 4, size_t num_workers = 8);
@@ -166,6 +169,9 @@ private:
     
     // 解析配置文件
     bool parseConfigFile(const std::string& config_file);
+    
+    // 初始化分片默认配置
+    void InitializeDefaultShardConfig();
     
     // RDB持久化辅助方法
     void loadRDBFromConfig();
