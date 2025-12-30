@@ -190,6 +190,8 @@ void testEvictionPolicies(dkv::TestRunner& runner) {
     
     // 测试VOLATILE_LRU策略
     {   
+        const int NUM_VOLATILE = 20;
+        const int NUM_PERMANENT = 10;
         std::cout << "\n测试VOLATILE_LRU策略..." << std::endl;
         dkv::DKVServer* server = new dkv::DKVServer(6383);
         server->setAOFEnabled(false);
@@ -205,29 +207,29 @@ void testEvictionPolicies(dkv::TestRunner& runner) {
                     int bytes_read = recv(sock, buffer, sizeof(buffer) - 1, 0);
                     return std::string(buffer, bytes_read);
                 };
-                
-                // 添加一些带过期时间的键
-                for (int i = 0; i < 20; ++i) {
+
+                std::cout << "\n添加一些带过期时间的键" << std::endl;
+                for (int i = 0; i < NUM_VOLATILE; ++i) {
                     auto key = "volatile_key" + std::to_string(i);
                     std::string response = sendCommand("SET " + key + " value" + std::to_string(i) + "\r\n");
                     ASSERT_CONTAINS(response, "+OK");
                     response = sendCommand("EXPIRE " + key + " 60\r\n");
                     ASSERT_CONTAINS(response, "$1");
                 }
-                
-                // 添加一些不带过期时间的键
-                for (int i = 0; i < 20; ++i) {
+
+                std::cout << "\n添加一些无过期时间的键" << std::endl;
+                for (int i = 0; i < NUM_PERMANENT; ++i) {
                     std::string response = sendCommand("SET permanent_key" + std::to_string(i) + " value" + std::to_string(i) + "\r\n");
                     ASSERT_CONTAINS(response, "+OK");
                 }
                 
-                // 读取一些带过期时间的键，使其成为LRU中的热点
-                for (int i = 15; i < 20; ++i) {
+                std::cout << "\n读取一些带过期时间的键，使其成为LRU中的热点" << std::endl;
+                for (int i = NUM_VOLATILE - 5; i < NUM_VOLATILE; ++i) {
                     std::string response = sendCommand("GET volatile_key" + std::to_string(i) + "\r\n");
                     ASSERT_CONTAINS(response, "value");
                 }
                 
-                // 添加更多数据触发淘汰
+                std::cout << "\n添加更多数据触发淘汰" << std::endl;
                 int new_keys_added = 0;
                 for (int i = 0; i < 100; ++i) {
                     std::string response = sendCommand("SET new_key" + std::to_string(i) + " new_value" + std::to_string(i) + "\r\n");
@@ -239,20 +241,23 @@ void testEvictionPolicies(dkv::TestRunner& runner) {
                 runner.runTest("测试VOLATILE_LRU策略会淘汰带过期时间的键", [&]() {
                     // 检查是否有旧的volatile键被淘汰，而新的volatile键和permanent键仍然存在
                     int missing_volatile = 0;
-                    for (int i = 0; i < 15; ++i) { // 检查非热点键
+                    for (int i = 0; i < NUM_VOLATILE; ++i) { // 检查非热点键
                         std::string response = sendCommand("GET volatile_key" + std::to_string(i) + "\r\n");
                         if (response.find("$-1") != std::string::npos) {
                             missing_volatile++;
                         }
                     }
+                    std::cout << "\nmissing_volatile: " << missing_volatile << std::endl;
                     
                     int missing_permanent = 0;
-                    for (int i = 0; i < 20; ++i) { // 检查permanent键
+                    for (int i = 0; i < NUM_PERMANENT; ++i) { // 检查permanent键
                         std::string response = sendCommand("GET permanent_key" + std::to_string(i) + "\r\n");
                         if (response.find("$-1") != std::string::npos) {
                             missing_permanent++;
                         }
                     }
+                    std::cout << "\nmissing_permanent: " << missing_permanent << std::endl;
+
                     assert(missing_volatile > 0);
                     assert(missing_permanent == 0);
                     assert(new_keys_added > 0);
