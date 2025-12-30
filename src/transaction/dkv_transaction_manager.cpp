@@ -105,9 +105,9 @@ ReadView TransactionManager::createReadView(TransactionID transaction_id) const 
     const auto& actives = getActiveTransactions();
     const auto& rolledback = getRolledbackTransactions();
     read_view.actives.reserve(actives.size() + rolledback.size());
-    read_view.actives.insert(actives.end(), actives.begin(), actives.end());
-    read_view.actives.insert(actives.end(), rolledback.begin(), rolledback.end());
-    auto pmin = min_element(actives.begin(), actives.end());
+    read_view.actives.insert(read_view.actives.end(), actives.begin(), actives.end());
+    read_view.actives.insert(read_view.actives.end(), rolledback.begin(), rolledback.end());
+    auto pmin = min_element(read_view.actives.begin(), read_view.actives.end());
     read_view.low = (pmin != read_view.actives.end() ? *pmin : 0);
     read_view.high = peekNextTransactionID();
     return read_view;
