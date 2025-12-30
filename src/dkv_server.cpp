@@ -577,7 +577,7 @@ Response DKVServer::executeCommand(const Command& command, TransactionID tx_id) 
     bool isReadOnly = isReadOnlyCommand(command.type);
     
     // 如果不是只读命令，且设置了最大内存限制，则检查内存使用情况
-    if (!isReadOnly && max_memory_ > 0) {
+    if (!isReadOnly && command.type != CommandType::DEL && max_memory_ > 0) {
         size_t currentUsage = getMemoryUsage();
         
         // 如果内存使用达到上限，尝试执行淘汰策略
