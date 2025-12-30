@@ -40,6 +40,9 @@ public:
     // 构造函数
     StorageEngine(TransactionIsolationLevel tx_isolation_level = TransactionIsolationLevel::READ_COMMITTED);
     ~StorageEngine();
+
+    // 事务管理器
+    std::unique_ptr<TransactionManager>& getTransactionManager() { return transaction_manager_; }
     
     // 禁止拷贝和移动
     StorageEngine(const StorageEngine&) = delete;

@@ -649,7 +649,8 @@ Response DKVServer::executeCommand(const Command& command, TransactionID tx_id) 
 
 // 在本机执行指定Command
 Response DKVServer::doCommandNative(const Command& command, TransactionID tx_id) {
-    recordCommandForAOF(tx_id, command, command_handler_, transaction_manager_);
+    unique_ptr<TransactionManager> &transaction_manager = storage_engine_->getTransactionManager();
+    recordCommandForAOF(tx_id, command, command_handler_, transaction_manager);
     bool need_inc_dirty = false;
     Response response;
     switch (command.type) {
@@ -660,10 +661,10 @@ Response DKVServer::doCommandNative(const Command& command, TransactionID tx_id)
             }
             if (command.args.size() == 0) {
                 // 开启事务
-                tx_id = transaction_manager_->begin();
+                tx_id = transaction_manager->begin();
             } else if (command.args.size() == 1) {
                 TransactionID spec_tx_id = stoi(command.args[0]);
-                if (!transaction_manager_->isActive(spec_tx_id)) {
+                if (!transaction_manager->isActive(spec_tx_id)) {
                     return Response(ResponseStatus::ERROR, "Invalid transaction ID");
                 }
                 tx_id = spec_tx_id;
@@ -677,9 +678,9 @@ Response DKVServer::doCommandNative(const Command& command, TransactionID tx_id)
             if (tx_id == NO_TX) {
                 return Response(ResponseStatus::ERROR, "Transaction not started");
             }
-            auto commands = transaction_manager_->getTransaction(tx_id).get_commands();
+            auto commands = transaction_manager->getTransaction(tx_id).get_commands();
             // 提交事务
-            transaction_manager_->commit(tx_id);
+            transaction_manager->commit(tx_id);
             return Response(ResponseStatus::OK, "OK");
         }
         case CommandType::DISCARD:
@@ -688,7 +689,7 @@ Response DKVServer::doCommandNative(const Command& command, TransactionID tx_id)
                 return Response(ResponseStatus::ERROR, "Transaction not started");
             }
             // 回滚事务
-            transaction_manager_->rollback(tx_id);
+            transaction_manager->rollback(tx_id);
             return Response(ResponseStatus::OK, "OK");
         }
         case CommandType::SET:
