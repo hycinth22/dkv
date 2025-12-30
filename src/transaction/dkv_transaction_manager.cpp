@@ -18,8 +18,8 @@ TransactionID TransactionManager::begin() {
     // generate a new transaction id
     TransactionID txid = nextTransactionId();
     // activate the transaction
-    lock_guard<mutex> lock(active_transactions_mutex_);
     Transaction new_tx(txid, createReadView(txid));
+    lock_guard<mutex> lock(active_transactions_mutex_);
     active_transactions_.insert({txid, new_tx});
     return txid;
 }
