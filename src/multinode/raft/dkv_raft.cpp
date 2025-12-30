@@ -675,32 +675,35 @@ void Raft::ApplyLogs() {
         DKV_LOG_DEBUGF("[Node {}] 准备应用日志索引 {}，logStartIndex={}", me_, nextIndex, logStartIndex_);
         
         // 检查日志是否在当前日志列表中
-        const RaftLogEntry* entry = nullptr;
+        bool found_entry = false;
+        size_t entryPos = 0;
         
         if (nextIndex >= logStartIndex_) {
-            for (const auto& logEntry : log_) {
-                if (logEntry.index == nextIndex) {
-                    entry = &logEntry;
+            for (size_t i = 0; i<log_.size(); i++) {
+                if (log_[i].index == nextIndex) {
+                    found_entry = true;
+                    entryPos = i;
                     break;
                 }
             }
         }
         
-        lock.unlock();
-        
-        if (entry != nullptr) {
-            DKV_LOG_DEBUGF("[Node {}] 找到日志条目，索引 {}，任期 {}，准备应用到状态机", me_, entry->index, entry->term);
+        if (found_entry) {
+            DKV_LOG_DEBUGF("[Node {}] 找到日志条目，索引 {}，任期 {}，准备应用到状态机", me_, log_[entryPos].index, log_[entryPos].term);
+            RaftLogEntry entry = log_[entryPos];
+            lock.unlock();
+    
             // 应用命令到状态机
-            Response result = stateMachine_->DoOp(*entry->command);
-            
+            Response result = stateMachine_->DoOp(*entry.command);
+
             // 设置命令结果，通知等待的客户端
-            setCommandResult(entry->index, entry->term, result);
+            setCommandResult(entry.index, entry.term, result);
             
             lock.lock();
             
             // 更新应用索引
             lastApplied_ = nextIndex;
-            DKV_LOG_INFOF("[Node {}] 成功提交日志。索引 {}，任期 {}，更新lastApplied={}", me_, nextIndex, entry->term, lastApplied_);
+            DKV_LOG_INFOF("[Node {}] 成功提交日志。索引 {}，任期 {}，更新lastApplied={}", me_, nextIndex, entry.term, lastApplied_);
 
             // 检查是否需要创建快照
             if (max_raft_state_ > 0 && PersistBytes() > max_raft_state_) {
