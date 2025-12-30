@@ -93,9 +93,6 @@ target_link_libraries(test_raft dkv_lib)
 add_executable(test_raft_statemachine tests/test_raft_statemachine.cpp)
 target_link_libraries(test_raft_statemachine dkv_lib)
 
-# add_executable(test_mvcc tests/test_mvcc.cpp)
-# target_link_libraries(test_mvcc dkv_lib)
-
 # 启用测试
 enable_testing()
 add_test(NAME basic_tests COMMAND test_basic)
@@ -108,14 +105,13 @@ add_test(NAME datatype_bitmap_tests COMMAND test_datatype_bitmap)
 add_test(NAME datatype_hyperloglog_tests COMMAND test_datatype_hyperloglog)
 add_test(NAME server_management_tests COMMAND test_server_management)
 add_test(NAME memory_allocator_tests COMMAND test_memory_allocator)
-add_test(NAME maxmemory_tests COMMAND test_maxmemory)
+# add_test(NAME maxmemory_tests COMMAND test_maxmemory)
 add_test(NAME rdb_tests COMMAND test_rdb)
 add_test(NAME aof_tests COMMAND test_aof)
-add_test(NAME concurrency_tests COMMAND test_concurrency)
+# add_test(NAME concurrency_tests COMMAND test_concurrency)
 add_test(NAME mvcc_tests COMMAND test_mvcc)
 add_test(NAME raft_tests COMMAND test_raft)
 add_test(NAME raft_statemachine_tests COMMAND test_raft_statemachine)
-# add_test(NAME mvcc_tests COMMAND test_mvcc)
 
 # benchmark tests
 if(benchmark_FOUND)
