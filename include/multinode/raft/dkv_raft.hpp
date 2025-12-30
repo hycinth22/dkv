@@ -251,6 +251,7 @@ private:
     
     // RAFT状态
     mutable std::mutex mutex_;
+    mutable std::condition_variable apply_cond;
     RaftState state_;
     int currentTerm_;
     int votedFor_;
@@ -282,6 +283,7 @@ private:
     
     // 内部线程
     std::thread raftThread_;
+    std::thread applyThread_;
     
     // 日志起始索引
     int logStartIndex_;

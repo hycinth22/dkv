@@ -60,6 +60,11 @@ void Raft::Start() {
             }
         }
     });
+    applyThread_ = std::thread([this]() {
+        while (running_) {
+            ApplyLogs();
+        }
+    });
 }
 
 // 停止RAFT
@@ -67,12 +72,15 @@ void Raft::Stop() {
     if (!running_) {
         return;
     }
-    
     running_ = false;
+    apply_cond.notify_one();
     
     // 等待线程结束
     if (raftThread_.joinable()) {
         raftThread_.join();
+    }
+    if (applyThread_.joinable()) {
+        applyThread_.join();
     }
 }
 
@@ -259,9 +267,7 @@ AppendEntriesResponse Raft::OnAppendEntries(const AppendEntriesRequest& request)
                 int oldCommitIndex = commitIndex_;
                 commitIndex_ = std::min(request.leaderCommit, log_.empty() ? logStartIndex_ - 1 : log_.back().index);
                 DKV_LOG_INFOF("[Node {}] FOLLOWER更新提交索引从 {} 到 {}", me_, oldCommitIndex, commitIndex_);
-                lock.unlock();
-                ApplyLogs();
-                lock.lock();
+                apply_cond.notify_one();
             }
             
             // 9. 返回成功
@@ -435,7 +441,7 @@ InstallSnapshotResponse Raft::OnInstallSnapshot(const InstallSnapshotRequest& re
         int oldCommitIndex = commitIndex_;
         commitIndex_ = std::min(request.leaderCommit, log_.empty() ? logStartIndex_ - 1 : log_.back().index);
         DKV_LOG_INFOF("[Node {}] 从leaderCommit更新commitIndex从 {} 到 {}", me_, oldCommitIndex, commitIndex_);
-        ApplyLogs();
+        apply_cond.notify_one();
     }
     
     DKV_LOG_DEBUGF("[Node {}] InstallSnapshot请求处理完成，返回success={}", me_, response.success);
@@ -664,7 +670,10 @@ void Raft::HandleElectionTimeout() {
 // 应用日志到状态机
 void Raft::ApplyLogs() {
     std::unique_lock<std::mutex> lock(mutex_);
-    
+    apply_cond.wait(lock, [this]() { return commitIndex_ > lastApplied_ || !running_; });
+    if (!running_) {
+        return;
+    }
     DKV_LOG_DEBUGF("[Node {}] 开始应用日志，lastApplied={}，commitIndex={}", me_, lastApplied_, commitIndex_);
     
     // 检查是否有新的日志需要应用
@@ -689,7 +698,7 @@ void Raft::ApplyLogs() {
         }
         
         if (found_entry) {
-            DKV_LOG_DEBUGF("[Node {}] 找到日志条目，索引 {}，任期 {}，准备应用到状态机", me_, log_[entryPos].index, log_[entryPos].term);
+            DKV_LOG_INFOF("[Node {}] 找到日志条目，索引 {}，任期 {}，准备应用到状态机", me_, log_[entryPos].index, log_[entryPos].term);
             RaftLogEntry entry = log_[entryPos];
             lock.unlock();
     
@@ -767,9 +776,7 @@ void Raft::UpdateCommitIndex() {
         int oldCommitIndex = commitIndex_;
         commitIndex_ = newCommitIndex;
         DKV_LOG_INFOF("[Node {}] LEADER更新提交索引从 {} 到 {}", me_, oldCommitIndex, commitIndex_);
-        lock.unlock();
-        ApplyLogs();
-        lock.lock();
+        apply_cond.notify_one();
     } else {
         DKV_LOG_DEBUGF("[Node {}] 无需更新提交索引，保持为 {}", me_, commitIndex_);
     }
