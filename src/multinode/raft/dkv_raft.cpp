@@ -519,7 +519,10 @@ void Raft::ResetElectionTimer() {
 // 开始选举
 void Raft::StartElection() {
     std::unique_lock<std::mutex> lock(mutex_);
-    
+    if (!running_) {
+        return;
+    }
+
     // 增加当前任期
     currentTerm_++;
     votedFor_ = me_;
@@ -601,7 +604,10 @@ void Raft::StartElection() {
 // 发送心跳
 void Raft::SendHeartbeats() {
     std::unique_lock<std::mutex> lock(mutex_);
-    
+    if (!running_) {
+        return;
+    }
+
     // 创建AppendEntries请求作为心跳
     AppendEntriesRequest request;
     request.term = currentTerm_;
@@ -618,6 +624,9 @@ void Raft::SendHeartbeats() {
     for (int i = 0; i < peers_.size(); i++) {
         if (i == me_) {
             continue;
+        }
+        if (!running_ || state_ != RaftState::LEADER) {
+            break;
         }
         
         // 发送请求
@@ -648,7 +657,10 @@ void Raft::SendHeartbeats() {
 // 处理选举超时
 void Raft::HandleElectionTimeout() {
     std::unique_lock<std::mutex> lock(mutex_);
-    
+    if (!running_) {
+        return;
+    }
+
     // 检查是否超时
     int64_t now = std::chrono::system_clock::now().time_since_epoch().count() / 1000000;
     if (now - lastElectionTime_ > electionTimeout_) {
@@ -849,6 +861,9 @@ void Raft::ReplicateLogs() {
     for (int i = 0; i < peers_.size(); i++) {
         if (i == me_) {
             continue;
+        }
+        if (!running_ || state_ != RaftState::LEADER) {
+            break;
         }
         
         DKV_LOG_DEBUGF("[Node {}] 处理节点 {}: nextIndex={}, matchIndex={}, logStartIndex={}", me_, i, nextIndex_[i], matchIndex_[i], logStartIndex_);
