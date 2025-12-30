@@ -7,13 +7,17 @@
 #include <mutex>
 #include <cassert>
 // todo: fix lock
+using namespace std;
 
 namespace dkv {
 
 StorageEngine::StorageEngine(TransactionIsolationLevel tx_isolation_level) 
-: memory_usage_(0) { 
-    transaction_manager_ = new TransactionManager(this, tx_isolation_level);
+: memory_usage_(0) {
+    DKV_LOG_DEBUG("创建事务管理器，隔离级别: ", static_cast<int>(tx_isolation_level));
+    transaction_manager_ = make_unique<TransactionManager>(this, tx_isolation_level);
 }
+
+StorageEngine::~StorageEngine() {}
 
 ReadView StorageEngine::getReadView(TransactionID tx_id) const {
     return transaction_manager_->getReadView(tx_id);

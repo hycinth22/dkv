@@ -25,7 +25,7 @@ private:
     // 内存使用统计
     std::atomic<size_t> memory_usage_;
 
-    TransactionManager* transaction_manager_; // 事务管理器
+    std::unique_ptr<TransactionManager> transaction_manager_; // 事务管理器
     
     // 获取内存使用量
     size_t getCurrentMemoryUsage() const;
@@ -39,18 +39,13 @@ private:
 public:
     // 构造函数
     StorageEngine(TransactionIsolationLevel tx_isolation_level = TransactionIsolationLevel::READ_COMMITTED);
-    ~StorageEngine() = default;
+    ~StorageEngine();
     
     // 禁止拷贝和移动
     StorageEngine(const StorageEngine&) = delete;
     StorageEngine& operator=(const StorageEngine&) = delete;
     StorageEngine(StorageEngine&&) = delete;
     StorageEngine& operator=(StorageEngine&&) = delete;
-    
-    // 设置事务管理器
-    void setTransactionManager(TransactionManager* manager) {
-        transaction_manager_ = manager;
-    }
 
     // 基本操作
     bool set(TransactionID tx_id, const Key& key, const Value& value);

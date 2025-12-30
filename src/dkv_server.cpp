@@ -453,11 +453,6 @@ bool DKVServer::initialize() {
     DKV_LOG_DEBUG("创建存储引擎实例");
     storage_engine_ = make_unique<StorageEngine>();
     
-    // 创建事务管理器并集成到存储引擎
-    DKV_LOG_DEBUG("创建事务管理器，隔离级别: ", static_cast<int>(transaction_isolation_level_));
-    transaction_manager_ = make_unique<TransactionManager>(storage_engine_.get(), transaction_isolation_level_);
-    storage_engine_->setTransactionManager(transaction_manager_.get());
-    
     // 创建工作线程池
     DKV_LOG_DEBUG("创建工作线程池，线程数: ", num_workers_);
     worker_pool_ = make_unique<WorkerThreadPool>(this, num_workers_);
@@ -471,8 +466,7 @@ bool DKVServer::initialize() {
     command_handler_ = make_unique<CommandHandler>(
         storage_engine_.get(), 
         nullptr, // AOF持久化稍后初始化
-        enable_aof_,
-        transaction_manager_.get()
+        enable_aof_
     );
     
     // 初始化RAFT组件（如果启用）

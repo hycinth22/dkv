@@ -14,7 +14,7 @@ class DKVServer;
 class CommandHandler {
 public:
     // 构造函数，接收存储引擎和AOF持久化的引用
-    CommandHandler(StorageEngine* storage_engine, AOFPersistence* aof_persistence, bool enable_aof, TransactionManager* transaction_manager);
+    CommandHandler(StorageEngine* storage_engine, AOFPersistence* aof_persistence, bool enable_aof);
     
     // 基本命令处理
     Response handleSetCommand(TransactionID tx_id, const Command& command, bool& need_inc_dirty);
@@ -97,7 +97,6 @@ public:
 private:
     StorageEngine* storage_engine_;  // 存储引擎指针
     AOFPersistence* aof_persistence_;  // AOF持久化指针
-    TransactionManager* transaction_manager_;  // 事务管理器指针
     bool enable_aof_;  // 是否启用AOF
     
     // 通用参数验证

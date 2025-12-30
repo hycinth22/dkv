@@ -9,8 +9,8 @@
 
 namespace dkv {
 
-CommandHandler::CommandHandler(StorageEngine* storage_engine, AOFPersistence* aof_persistence, bool enable_aof, TransactionManager* transaction_manager)
-    : storage_engine_(storage_engine), aof_persistence_(aof_persistence), enable_aof_(enable_aof), transaction_manager_(transaction_manager) {
+CommandHandler::CommandHandler(StorageEngine* storage_engine, AOFPersistence* aof_persistence, bool enable_aof)
+    : storage_engine_(storage_engine), aof_persistence_(aof_persistence), enable_aof_(enable_aof) {
 }
 
 Response CommandHandler::handleSetCommand(TransactionID tx_id, const Command& command, bool& need_inc_dirty) {
