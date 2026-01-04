@@ -24,11 +24,9 @@
 
 **高并发处理**：基于多线程Reactor模型、事件驱动的非阻塞I/O（epoll），支持高并发连接处理。使用线程池并发处理Command。
 
-**线程安全**：使用读写锁保护数据访问，支持多客户端并发连接
-
 **TTL支持**：支持为key设置过期时间; 后台根据过期时间自动清理过期键值对
 
-**内存限制与淘汰**：支持内存配额限制，支持8种淘汰策略NOEVICTION、{VOLATILE/ALLKEYS}_{LRU/LFU/RANDOM}、VOLATILE_TTL。
+**内存限制与淘汰**：支持内存配额限制，8种淘汰策略NOEVICTION、{VOLATILE/ALLKEYS}_{LRU/LFU/RANDOM}、VOLATILE_TTL。
 
 **事务支持**：支持MULTI、EXEC、DISCARD等事务命令，支持四种事务隔离级别
 
