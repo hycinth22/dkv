@@ -17,7 +17,7 @@ namespace dkv {
 
 DKVServer::DKVServer(int port, size_t num_sub_reactors, size_t num_workers) 
     : running_(false), cleanup_running_(false), 
-      port_(port), max_memory_(0), num_sub_reactors_(num_sub_reactors), num_workers_(num_workers),
+      port_(port), max_memory_(0), num_sub_reactors_(num_sub_reactors), num_workers_(num_workers), num_buckets_(1024),
       enable_rdb_(true), rdb_filename_("dump.rdb"), rdb_save_interval_(3600), rdb_save_changes_(1000),
       rdb_changes_(0), last_save_time_(chrono::system_clock::now()), rdb_save_running_(false),
       enable_aof_(false), aof_filename_("appendonly.aof"), aof_fsync_policy_("everysec"),
@@ -455,8 +455,8 @@ bool DKVServer::initialize() {
     DKV_LOG_INFO("开始初始化DKV服务器");
     
     // 创建存储引擎实例
-    DKV_LOG_DEBUG("创建存储引擎实例");
-    storage_engine_ = make_unique<StorageEngine>();
+    DKV_LOG_DEBUG("创建存储引擎实例，隔离级别: ", static_cast<int>(transaction_isolation_level_), ", 桶数量: ", num_buckets_);
+    storage_engine_ = make_unique<StorageEngine>(transaction_isolation_level_, num_buckets_);
     
     // 创建工作线程池
     DKV_LOG_DEBUG("创建工作线程池，线程数: ", num_workers_);
@@ -1099,6 +1099,9 @@ bool DKVServer::parseConfigFile(const string& config_file) {
             } else if (key == "shard_raft_data_dir") {
                 // 分片RAFT数据目录
                 shard_raft_data_dir_ = value;
+            } else if (key == "num_buckets") {
+                // 存储桶数量
+                num_buckets_ = stoul(value);
             } else if (key.find("shard_peer_") == 0) {
                 // 分片RAFT集群节点配置
                 // 格式: shard_peer_<shard_id>_<peer_id>

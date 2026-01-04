@@ -41,6 +41,7 @@ private:
     size_t max_memory_; // 最大内存限制（字节）
     size_t num_sub_reactors_; // 子Reactor数量
     size_t num_workers_;      // 工作线程数量
+    size_t num_buckets_;      // 存储桶数量
     
     // RDB持久化相关配置
     bool enable_rdb_;         // 是否启用RDB持久化

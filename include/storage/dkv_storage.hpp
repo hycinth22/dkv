@@ -6,6 +6,7 @@
 #include "../persist/dkv_rdb.hpp"
 #include "../transaction/dkv_transaction_manager.hpp"
 #include "dkv_inner_storage.hpp"
+#include "dkv_storage_bucket.hpp"
 #include <unordered_map>
 #include <shared_mutex>
 #include <memory>
@@ -15,8 +16,9 @@ namespace dkv {
 // 存储引擎
 class StorageEngine {
 private:
-    // 内部存储
-    InnerStorage inner_storage_;
+    // 分桶相关
+    size_t num_buckets_;
+    std::vector<std::unique_ptr<StorageBucket>> buckets_;
     
     // 统计信息
     std::atomic<uint64_t> total_keys_{0};
@@ -26,6 +28,13 @@ private:
     std::atomic<size_t> memory_usage_;
 
     std::unique_ptr<TransactionManager> transaction_manager_; // 事务管理器
+    
+    // 计算键的哈希值，返回对应的bucket索引
+    size_t getBucketIndex(const Key& key) const {
+        // 使用std::hash计算哈希值
+        std::hash<std::string> hasher;
+        return hasher(key) % num_buckets_;
+    }
     
     // 获取内存使用量
     size_t getCurrentMemoryUsage() const;
@@ -38,7 +47,8 @@ private:
 
 public:
     // 构造函数
-    StorageEngine(TransactionIsolationLevel tx_isolation_level = TransactionIsolationLevel::READ_COMMITTED);
+    StorageEngine(TransactionIsolationLevel tx_isolation_level = TransactionIsolationLevel::READ_COMMITTED,
+                  size_t num_buckets = 1024);
     ~StorageEngine();
 
     // 事务管理器
