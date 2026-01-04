@@ -134,6 +134,7 @@ void DKVServer::loadRDBFromConfig() {
 
 void DKVServer::stop() {
     if (!running_.load()) {
+        DKV_LOG_INFO("服务器已停止，不需要再执行停止");
         return;
     }
     
@@ -472,6 +473,17 @@ bool DKVServer::initialize() {
         nullptr, // AOF持久化稍后初始化
         enable_aof_
     );
+    
+    // 设置脚本命令执行回调
+    command_handler_->setScriptCommandCallback([this](const std::string& cmd_str, TransactionID tx_id) -> std::string {
+        size_t pos = 0;
+        Command cmd = RESPProtocol::parseCommand(cmd_str, pos);
+        if (cmd.type == CommandType::UNKNOWN) {
+            return "(error) ERR unknown command";
+        }
+        Response resp = doCommandNative(cmd, tx_id);
+        return resp.message.empty() ? resp.data : resp.message;
+    });
     
     // 初始化RAFT组件（如果启用）
     if (enable_raft_) {
@@ -881,6 +893,9 @@ Response DKVServer::doCommandNative(const Command& command, TransactionID tx_id)
             break;
         case CommandType::PFMERGE:
             response = command_handler_->handlePFMergeCommand(tx_id, command, need_inc_dirty);
+            break;
+        case CommandType::EVALX:
+            response = command_handler_->handleEvalXCommand(tx_id, command);
             break;
         default:
             return Response(ResponseStatus::INVALID_COMMAND);

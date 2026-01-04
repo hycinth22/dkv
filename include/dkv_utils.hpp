@@ -26,6 +26,9 @@ public:
     
     // 整数转字符串
     static std::string intToString(int64_t value);
+    
+    // Base64解码
+    static std::string base64Decode(const std::string& encoded);
 };
 
 void printBacktrace();

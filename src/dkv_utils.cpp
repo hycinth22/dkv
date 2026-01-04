@@ -79,6 +79,8 @@ CommandType Utils::stringToCommandType(const std::string& cmd) {
         {"MULTI", CommandType::MULTI},
         {"EXEC", CommandType::EXEC},
         {"DISCARD", CommandType::DISCARD},
+        // 脚本命令
+        {"EVALX", CommandType::EVALX},
     };
     
     auto it = command_map.find(cmd);
@@ -153,6 +155,8 @@ std::string Utils::commandTypeToString(CommandType type) {
         {CommandType::MULTI, "MULTI"},
         {CommandType::EXEC, "EXEC"},
         {CommandType::DISCARD, "DISCARD"},
+        // 脚本命令
+        {CommandType::EVALX, "EVALX"},
     };
     
     auto it = type_map.find(type);
@@ -194,6 +198,62 @@ int64_t Utils::stringToInt(const std::string& str) {
 
 std::string Utils::intToString(int64_t value) {
     return std::to_string(value);
+}
+
+std::string Utils::base64Decode(const std::string& encoded) {
+    static const std::string base64_chars = 
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        "abcdefghijklmnopqrstuvwxyz"
+        "0123456789+/";
+    
+    std::string decoded;
+    int i = 0;
+    int j = 0;
+    int in_enc = 0;
+    unsigned char char_array_4[4], char_array_3[3];
+    
+    for (char c : encoded) {
+        if (base64_chars.find(c) == std::string::npos) {
+            continue; // Skip invalid characters
+        }
+        
+        char_array_4[i++] = c;
+        if (i == 4) {
+            for (i = 0; i < 4; i++) {
+                char_array_4[i] = base64_chars.find(char_array_4[i]);
+            }
+            
+            char_array_3[0] = (char_array_4[0] << 2) + ((char_array_4[1] & 0x30) >> 4);
+            char_array_3[1] = ((char_array_4[1] & 0xf) << 4) + ((char_array_4[2] & 0x3c) >> 2);
+            char_array_3[2] = ((char_array_4[2] & 0x3) << 6) + char_array_4[3];
+            
+            for (i = 0; i < 3; i++) {
+                decoded += char_array_3[i];
+            }
+            
+            i = 0;
+        }
+    }
+    
+    if (i > 0) {
+        for (j = i; j < 4; j++) {
+            char_array_4[j] = 0;
+        }
+        
+        for (j = 0; j < 4; j++) {
+            char_array_4[j] = base64_chars.find(char_array_4[j]);
+        }
+        
+        char_array_3[0] = (char_array_4[0] << 2) + ((char_array_4[1] & 0x30) >> 4);
+        char_array_3[1] = ((char_array_4[1] & 0xf) << 4) + ((char_array_4[2] & 0x3c) >> 2);
+        char_array_3[2] = ((char_array_4[2] & 0x3) << 6) + char_array_4[3];
+        
+        for (j = 0; j < i - 1; j++) {
+            decoded += char_array_3[j];
+        }
+    }
+    
+    return decoded;
 }
 
 void printBacktrace() {

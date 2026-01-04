@@ -92,7 +92,9 @@ enum class CommandType {
     // 事务命令
     MULTI = 53,
     EXEC = 54,
-    DISCARD = 55
+    DISCARD = 55,
+    // 脚本命令
+    EVALX = 56
 };
 
 inline bool isReadOnlyCommand(CommandType type) {
@@ -140,6 +142,7 @@ inline bool commandNotAllowedInTx(CommandType type) {
         case CommandType::BGSAVE:
         case CommandType::RESTORE_HLL:
         case CommandType::MULTI:
+        case CommandType::EVALX:
             return true;
         default:
             return false;

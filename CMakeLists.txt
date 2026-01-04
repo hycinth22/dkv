@@ -25,6 +25,17 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
+# Script VM库路径配置
+set(SCRIPT_VM_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/include/scriptvm")
+set(SCRIPT_VM_LIB_DIR "${CMAKE_SOURCE_DIR}/lib")
+
+# 根据构建类型选择Script VM库
+if(CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_BUILD_TYPE STREQUAL "")
+    set(SCRIPT_VM_LIB "${SCRIPT_VM_LIB_DIR}/debug/libdkv_script.so")
+else()
+    set(SCRIPT_VM_LIB "${SCRIPT_VM_LIB_DIR}/release/libdkv_script.so")
+endif()
+
 # 查找线程库
 find_package(Threads REQUIRED)
 
@@ -34,8 +45,9 @@ find_package(benchmark)
 # 创建DKV库
 file(GLOB_RECURSE DKV_SOURCES "src/*.cpp")
 include_directories(include)
+include_directories(${SCRIPT_VM_INCLUDE_DIR})
 add_library(dkv_lib STATIC ${DKV_SOURCES})
-target_link_libraries(dkv_lib Threads::Threads)
+target_link_libraries(dkv_lib Threads::Threads ${SCRIPT_VM_LIB})
 
 # 创建主程序
 add_executable(dkv_server src/dkv_main.cpp)
@@ -93,6 +105,9 @@ target_link_libraries(test_raft dkv_lib)
 add_executable(test_raft_statemachine tests/test_raft_statemachine.cpp)
 target_link_libraries(test_raft_statemachine dkv_lib)
 
+add_executable(test_script tests/test_script.cpp)
+target_link_libraries(test_script dkv_lib)
+
 # 启用测试
 enable_testing()
 add_test(NAME basic_tests COMMAND test_basic)
@@ -112,6 +127,7 @@ add_test(NAME concurrency_tests COMMAND test_concurrency)
 add_test(NAME mvcc_tests COMMAND test_mvcc)
 add_test(NAME raft_tests COMMAND test_raft)
 add_test(NAME raft_statemachine_tests COMMAND test_raft_statemachine)
+add_test(NAME script_tests COMMAND test_script)
 
 # benchmark tests
 if(benchmark_FOUND)

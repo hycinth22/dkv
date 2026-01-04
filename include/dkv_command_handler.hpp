@@ -5,16 +5,23 @@
 #include "storage/dkv_storage.hpp"
 #include "persist/dkv_aof.hpp"
 #include <memory>
+#include <functional>
 
 namespace dkv {
 
 class DKVServer;
+
+// 脚本命令执行回调类型
+using ScriptCommandExecutor = std::function<std::string(const std::string& command, TransactionID tx_id)>;
 
 // 命令处理器类，负责处理各种Redis命令
 class CommandHandler {
 public:
     // 构造函数，接收存储引擎和AOF持久化的引用
     CommandHandler(StorageEngine* storage_engine, AOFPersistence* aof_persistence, bool enable_aof);
+    
+    // 设置脚本命令执行回调
+    void setScriptCommandCallback(ScriptCommandExecutor callback);
     
     // 基本命令处理
     Response handleSetCommand(TransactionID tx_id, const Command& command, bool& need_inc_dirty);
@@ -75,6 +82,9 @@ public:
     Response handlePFAddCommand(TransactionID tx_id, const Command& command, bool& need_inc_dirty);
     Response handlePFCountCommand(TransactionID tx_id, const Command& command);
     Response handlePFMergeCommand(TransactionID tx_id, const Command& command, bool& need_inc_dirty);
+    
+    // 脚本命令处理
+    Response handleEvalXCommand(TransactionID tx_id, const Command& command);
     Response handleRestoreHLLCommand(const Command& command, bool& need_inc_dirty);
     
     // 服务器管理命令处理
@@ -98,6 +108,7 @@ private:
     StorageEngine* storage_engine_;  // 存储引擎指针
     AOFPersistence* aof_persistence_;  // AOF持久化指针
     bool enable_aof_;  // 是否启用AOF
+    ScriptCommandExecutor script_command_executor_;  // 脚本命令执行回调
     
     // 通用参数验证
     bool validateParamCount(const Command& command, size_t min_count);

@@ -3,6 +3,7 @@
 #include "dkv_logger.hpp"
 #include "net/dkv_resp.hpp"
 #include "dkv_datatypes.hpp"
+#include "dkv_script.hpp"
 
 #include <thread>
 #include <chrono>
@@ -11,6 +12,10 @@ namespace dkv {
 
 CommandHandler::CommandHandler(StorageEngine* storage_engine, AOFPersistence* aof_persistence, bool enable_aof)
     : storage_engine_(storage_engine), aof_persistence_(aof_persistence), enable_aof_(enable_aof) {
+}
+
+void CommandHandler::setScriptCommandCallback(ScriptCommandExecutor callback) {
+    script_command_executor_ = std::move(callback);
 }
 
 Response CommandHandler::handleSetCommand(TransactionID tx_id, const Command& command, bool& need_inc_dirty) {
@@ -887,6 +892,30 @@ Response CommandHandler::handlePFMergeCommand(TransactionID tx_id, const Command
         return Response(ResponseStatus::OK, "", "OK");
     } else {
         return Response(ResponseStatus::ERROR, "PFMERGE操作失败");
+    }
+}
+
+Response CommandHandler::handleEvalXCommand(TransactionID tx_id, const Command& command) {
+    if (command.args.size() < 1) {
+        return Response(ResponseStatus::ERROR, "EVALX命令需要至少1个参数: 脚本(base64 encoded)");
+    }
+
+    const std::string& script_base64 = command.args[0];
+    const std::string& script = Utils::base64Decode(script_base64);
+
+    try {
+        dkv_script::DkvScript vm;
+        vm.setDkvCommandHandler([this, tx_id](const std::string& cmd_str) -> std::string {
+            if (!script_command_executor_) {
+                return "(error) ERR script command callback not set";
+            }
+            return script_command_executor_(cmd_str, tx_id);
+        });
+        vm.execute(script);
+        return Response(ResponseStatus::OK, "", "OK");
+    } catch (const std::exception& e) {
+        DKV_LOG_ERROR("Script error: {}", e.what());
+        return Response(ResponseStatus::ERROR, std::string("Script error: ") + e.what());
     }
 }
 
