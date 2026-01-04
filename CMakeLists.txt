@@ -135,6 +135,12 @@ if(benchmark_FOUND)
     target_link_libraries(benchmark_hello dkv_lib pthread)
     target_link_libraries(benchmark_hello benchmark::benchmark)
     add_test(NAME benchmark_hello COMMAND benchmark_hello)
+    
+    # 存储高并发基准测试
+    add_executable(benchmark_storage_high_concurrency tests/benchmark_storage_high_concurrency.cpp)
+    target_link_libraries(benchmark_storage_high_concurrency dkv_lib pthread)
+    target_link_libraries(benchmark_storage_high_concurrency benchmark::benchmark)
+    add_test(NAME benchmark_storage_high_concurrency COMMAND benchmark_storage_high_concurrency)
 endif()
 
 # 安装规则
