@@ -16,6 +16,7 @@
 | HyperLogLog | PFADD、PFCOUNT、PFMERGE                                 |
 | 服务器管理   | INFO、DBSIZE、FLUSH、SHUTDOWN、SAVE/BGSAVE、             |
 | 事务        | MULTI、EXEC、DISCARD                                    |
+| 脚本执行     | EVALX 采用自设计的脚本语言，自实现编译到字节码和VM（见[dkv_script](https://github.com/hycinth22/dkv_script)）    |
 
 
 **C++17**：利用智能指针、移动语义、原子操作、线程安全等现代C++特性。类型安全的枚举和强类型。模板元编程。
