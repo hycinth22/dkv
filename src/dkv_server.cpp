@@ -6,6 +6,7 @@
 #include "multinode/raft/dkv_raft_statemachine.hpp"
 #include "multinode/raft/dkv_raft_persist.hpp"
 #include "multinode/shard/dkv_shard.hpp"
+#include "datatypes/dkv_datatype_zset.hpp"
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -1119,6 +1120,9 @@ bool DKVServer::parseConfigFile(const string& config_file) {
                     }
                     shard_peers_[shard_id][peer_id] = value;
                 }
+            } else if (key == "zset_impl_type") {
+                // ZSet实现类型配置
+                setZSetImplTypeFromConfig(value);
             }
         }
     }
