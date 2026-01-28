@@ -122,6 +122,33 @@ BENCHMARK_DEFINE_F(StorageHighConcurrencyBenchmark, BM_MixedReadWrite)(benchmark
     state.SetItemsProcessed(state.iterations());
 }
 
+// 高并发读写混合测试（高写比例，50%读，50%写）
+BENCHMARK_DEFINE_F(StorageHighConcurrencyBenchmark, BM_HighWriteRatio)(benchmark::State& state) {
+    size_t thread_idx = state.thread_index();
+    
+    for (auto _ : state) {
+        // 高写比例：50%读，50%写
+        size_t operation = (thread_idx * 31337 + state.iterations() * 1013) % 2;
+        size_t key_index = (thread_idx * 100000 + state.iterations()) % total_keys_;
+        string key = "bench_key_" + to_string(key_index);
+        
+        if (operation == 0) {
+            // 50%读取操作
+            benchmark::DoNotOptimize(storage_engine_->get(NO_TX, key));
+        } else {
+            // 50%写入操作（交替set和del）
+            if (state.iterations() % 2 == 0) {
+                string value = "high_write_value_" + to_string(state.iterations());
+                storage_engine_->set(NO_TX, key, value);
+            } else {
+                storage_engine_->del(NO_TX, key);
+            }
+        }
+    }
+    
+    state.SetItemsProcessed(state.iterations());
+}
+
 // 注册基准测试
 BENCHMARK_REGISTER_F(StorageHighConcurrencyBenchmark, BM_SingleThreadReadDifferentKeys)
     ->Arg(1024) // 使用1024个桶
@@ -151,6 +178,16 @@ BENCHMARK_REGISTER_F(StorageHighConcurrencyBenchmark, BM_DifferentBucketCount)
 // 注册读写混合测试
 BENCHMARK_REGISTER_F(StorageHighConcurrencyBenchmark, BM_MixedReadWrite)
     ->Arg(1024)
+    ->ThreadRange(1, 32)
+    ->UseRealTime();
+
+// 注册高写比例测试
+BENCHMARK_REGISTER_F(StorageHighConcurrencyBenchmark, BM_HighWriteRatio)
+    ->Arg(1)
+    ->Arg(256)
+    ->Arg(512)
+    ->Arg(1024)
+    ->Arg(2048)
     ->ThreadRange(1, 32)
     ->UseRealTime();
 
