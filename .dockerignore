@@ -1,0 +1,32 @@
+# 构建目录
+build/
+cmake-build-debug/
+
+# 日志文件
+*.log
+logs/
+
+# 数据文件
+appendonly.aof
+dump.rdb
+
+# IDE 文件
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Git 文件
+.git/
+.gitignore
+
+# 测试文件
+test_*.cpp
+
+# 文档
+docs/
+README.md
+
+# 配置文件（除了 config.conf）
+*.conf
+!config.conf
