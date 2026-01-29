@@ -27,24 +27,15 @@ Response CommandHandler::handleSetCommand(TransactionID tx_id, const Command& co
     std::string value = command.args[1];
     bool success;
     
-    if (command.args.size() >= 4 && command.args[2] == "PX") {
-        // 支持 PX 参数设置毫秒过期时间
-        try {
-            int64_t ms = std::stoll(command.args[3]);
-            success = storage_engine_->set(tx_id, key, value, ms / 1000);
-            DKV_LOG_DEBUG("设置键 ", key.c_str(), " 带有过期时间 ", ms, " 毫秒");
-        } catch (const std::invalid_argument&) {
+    if (command.args.size() >= 4 && (command.args[2] == "PX" || command.args[2] == "EX")) {
+        // 检查是否已经有时间戳
+        if (command.timestamp == Timestamp()) {
             return Response(ResponseStatus::ERROR, "无效的过期时间");
         }
-    } else if (command.args.size() >= 4 && command.args[2] == "EX") {
-        // 支持 EX 参数设置秒过期时间
-        try {
-            int64_t seconds = std::stoll(command.args[3]);
-            success = storage_engine_->set(tx_id, key, value, seconds);
-            DKV_LOG_DEBUG("设置键 ", key.c_str(), " 带有过期时间 ", seconds, " 秒");
-        } catch (const std::invalid_argument&) {
-            return Response(ResponseStatus::ERROR, "无效的过期时间");
-        }
+
+        // 使用已经设置好的时间戳
+        success = storage_engine_->set(tx_id, key, value, command.timestamp);
+        DKV_LOG_DEBUG("设置键 ", key.c_str(), " 具有过期时间戳", std::chrono::duration_cast<std::chrono::milliseconds>(command.timestamp.time_since_epoch()).count());
     } else {
         success = storage_engine_->set(tx_id, key, value);
         DKV_LOG_DEBUG("设置键 ", key.c_str());

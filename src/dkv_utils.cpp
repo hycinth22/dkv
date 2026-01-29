@@ -8,8 +8,28 @@
 #include <iostream>
 #include <cstdlib>
 #include <csignal>
+#include <arpa/inet.h>
 
 namespace dkv {
+
+// 网络字节序转换函数实现
+uint64_t htonll(uint64_t value) {
+    // 大端小端判断
+    static const int endian = []() {
+        int i = 1;
+        return *(char*)&i == 1 ? 0 : 1; // 0 for little-endian, 1 for big-endian
+    }();
+    
+    if (endian == 1) {
+        return value;
+    } else {
+        return ((uint64_t)htonl(value & 0xFFFFFFFF) << 32) | htonl(value >> 32);
+    }
+}
+
+uint64_t ntohll(uint64_t value) {
+    return htonll(value);
+}
 
 // Utils 实现
 CommandType Utils::stringToCommandType(const std::string& cmd) {

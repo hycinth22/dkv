@@ -111,6 +111,9 @@ target_link_libraries(test_raft_statemachine dkv_lib)
 add_executable(test_script tests/test_script.cpp)
 target_link_libraries(test_script dkv_lib)
 
+add_executable(test_ttl_raft tests/test_ttl_raft.cpp)
+target_link_libraries(test_ttl_raft dkv_lib)
+
 # 启用测试
 enable_testing()
 add_test(NAME basic_tests COMMAND test_basic)
@@ -131,6 +134,7 @@ add_test(NAME concurrency_tests COMMAND test_concurrency)
 add_test(NAME mvcc_tests COMMAND test_mvcc)
 add_test(NAME raft_tests COMMAND test_raft)
 add_test(NAME raft_statemachine_tests COMMAND test_raft_statemachine)
+add_test(NAME ttl_raft_tests COMMAND test_ttl_raft)
 add_test(NAME script_tests COMMAND test_script)
 
 # benchmark tests

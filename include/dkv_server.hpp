@@ -183,6 +183,8 @@ private:
     // 增加数据变更计数
     void incDirty();
     void incDirty(int delta);
+
+    Response calculateCommandExpiration(Command& mutable_command);
 };
 
 } // namespace dkv

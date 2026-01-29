@@ -643,9 +643,16 @@ Response DKVServer::executeCommand(const Command& command, TransactionID tx_id) 
             }
         }
         
+        // 当前节点是领导者，处理命令中的过期时间设置
+        Command mutable_command = command;
+        Response expiration_response = calculateCommandExpiration(mutable_command);
+        if (expiration_response.status != ResponseStatus::OK) {
+            return expiration_response;
+        }
+        
         // 当前节点是领导者，将命令提交到Raft
         int index, term;
-        auto raft_cmd = make_shared<RaftCommand>(tx_id, command);
+        auto raft_cmd = make_shared<RaftCommand>(tx_id, mutable_command);
         bool ok = raft_->StartCommand(raft_cmd, index, term);
         if (!ok) {
             // 提交失败，可能是因为在提交过程中失去了领导者地位
@@ -1135,6 +1142,33 @@ void DKVServer::incDirty() {
 
 void DKVServer::incDirty(int delta) {
     rdb_changes_ += delta;
+}
+
+// 处理命令的过期时间设置
+Response DKVServer::calculateCommandExpiration(Command& mutable_command) {
+    if (mutable_command.type == CommandType::SET) {
+        // 检查是否有EX或PX参数
+        if (mutable_command.args.size() >= 4 && mutable_command.args[2] == "PX") {
+            // 支持 PX 参数设置毫秒过期时间
+            try {
+                int64_t ms = std::stoll(mutable_command.args[3]);
+                auto expire_time = Utils::getCurrentTime() + std::chrono::milliseconds(ms);
+                mutable_command.timestamp = expire_time;
+            } catch (const std::invalid_argument&) {
+                return Response(ResponseStatus::ERROR, "无效的过期时间");
+            }
+        } else if (mutable_command.args.size() >= 4 && mutable_command.args[2] == "EX") {
+            // 支持 EX 参数设置秒过期时间
+            try {
+                int64_t seconds = std::stoll(mutable_command.args[3]);
+                auto expire_time = Utils::getCurrentTime() + std::chrono::seconds(seconds);
+                mutable_command.timestamp = expire_time;
+            } catch (const std::invalid_argument&) {
+                return Response(ResponseStatus::ERROR, "无效的过期时间");
+            }
+        }
+    }
+    return Response(ResponseStatus::OK);
 }
 
 void DKVServer::rdbAutoSaveThread() {

@@ -30,6 +30,11 @@ void Command::serialize(std::vector<char>& buffer) const {
         // 序列化字符串内容
         buffer.insert(buffer.end(), arg.begin(), arg.end());
     }
+    
+    // 4. 序列化timestamp
+    auto timestamp_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(timestamp.time_since_epoch()).count();
+    uint64_t timestamp_hton = htonll(timestamp_ns);
+    buffer.insert(buffer.end(), (char*)&timestamp_hton, (char*)&timestamp_hton + sizeof(timestamp_hton));
 }
 
 bool Command::deserialize(const std::vector<char>& buffer) {
@@ -53,6 +58,12 @@ bool Command::deserialize(const std::vector<char>& buffer) {
         memcpy(arg.data(), buffer.data() + offset, argSize);
         offset += argSize;
     }
+    
+    // 4. 反序列化timestamp
+    if (offset + sizeof(uint64_t) <= buffer.size()) {
+        uint64_t timestamp_ntoh = ntohll(*(uint64_t*)(buffer.data() + offset));
+        timestamp = std::chrono::system_clock::time_point(std::chrono::nanoseconds(timestamp_ntoh));
+    }
     return true;
 }
 
@@ -64,6 +75,10 @@ std::ostream& Command::write(std::ostream& os) const {
     for (const auto& arg : args) {
         os << arg.size() << " " << arg << " ";
     }
+    
+    // 输出timestamp
+    auto timestamp_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(timestamp.time_since_epoch()).count();
+    os << timestamp_ns << " ";
     return os;
 }
 
@@ -82,6 +97,11 @@ std::istream& Command::read(std::istream& is) {
         arg.resize(size);
         is.read(arg.data(), size);
     }
+    
+    // 读取timestamp
+    uint64_t timestamp_ns;
+    is >> timestamp_ns;
+    timestamp = std::chrono::system_clock::time_point(std::chrono::nanoseconds(timestamp_ns));
     return is;
 }
 
@@ -96,6 +116,8 @@ size_t Command::PersistBytes() const {
         size += sizeof(arg.size());
         size += arg.size();
     }
+    // timestamp大小
+    size += sizeof(uint64_t);
     return size;
 }
 

@@ -181,9 +181,11 @@ enum class TransactionIsolationLevel {
 struct Command {
     CommandType type;
     std::vector<std::string> args;
+    Timestamp timestamp; // 绝对过期时间戳
     
     Command() : type(CommandType::UNKNOWN) {}
     Command(CommandType t, const std::vector<std::string>& a) : type(t), args(a) {}
+    Command(CommandType t, const std::vector<std::string>& a, Timestamp ts) : type(t), args(a), timestamp(ts) {}
 
     std::string desc() const;
 

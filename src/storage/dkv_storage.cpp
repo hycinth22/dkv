@@ -45,6 +45,14 @@ bool StorageEngine::set(TransactionID tx_id, const Key& key, const Value& value,
     return bucket->set(tx_id, key, std::move(item));
 }
 
+bool StorageEngine::set(TransactionID tx_id, const Key& key, const Value& value, Timestamp expire_time) {
+    size_t bucket_idx = getBucketIndex(key);
+    auto& bucket = buckets_[bucket_idx];
+    auto lock = bucket->wlock();
+    auto item = createStringItem(value, expire_time);
+    return bucket->set(tx_id, key, std::move(item));
+}
+
 std::string StorageEngine::get(TransactionID tx_id, const Key& key) {
     size_t bucket_idx = getBucketIndex(key);
     auto& bucket = buckets_[bucket_idx];

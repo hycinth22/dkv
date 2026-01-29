@@ -63,6 +63,7 @@ public:
     // 基本操作
     bool set(TransactionID tx_id, const Key& key, const Value& value);
     bool set(TransactionID tx_id, const Key& key, const Value& value, int64_t expire_seconds);
+    bool set(TransactionID tx_id, const Key& key, const Value& value, Timestamp expire_time);
     std::string get(TransactionID tx_id, const Key& key);
     bool del(TransactionID tx_id, const Key& key);
     bool exists(TransactionID tx_id, const Key& key);
