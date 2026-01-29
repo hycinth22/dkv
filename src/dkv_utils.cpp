@@ -9,8 +9,17 @@
 #include <cstdlib>
 #include <csignal>
 #include <arpa/inet.h>
+#include <chrono>
+#include <cstdint>
 
 namespace dkv {
+
+int64_t getLocalTime() {
+    auto now = std::chrono::system_clock::now();
+    auto duration = now.time_since_epoch();
+    auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
+    return milliseconds;
+}
 
 // 网络字节序转换函数实现
 uint64_t htonll(uint64_t value) {
