@@ -99,5 +99,7 @@ private:
 // 哈希函数实现
 std::string CRC32Hash(const std::string& key);
 std::string Murmur3Hash(const std::string& key);
+std::string MD5Hash(const std::string& key);
+std::string SHA1Hash(const std::string& key);
 
 } // namespace dkv
