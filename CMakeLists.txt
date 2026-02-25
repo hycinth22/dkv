@@ -38,8 +38,8 @@ endif()
 
 # 查找线程库
 find_package(Threads REQUIRED)
-
-# 查找Google Benchmark库
+# 查找GTest/Google Benchmark库
+find_package(GTest)
 find_package(benchmark)
 
 # 创建DKV库
@@ -115,7 +115,11 @@ add_executable(test_ttl_raft tests/test_ttl_raft.cpp)
 target_link_libraries(test_ttl_raft dkv_lib)
 
 add_executable(test_logical_clock tests/test_logical_clock.cpp)
-target_link_libraries(test_logical_clock dkv_lib gtest gtest_main pthread)
+target_link_libraries(test_logical_clock
+    dkv_lib
+    GTest::gtest_main
+    pthread
+)
 
 # 启用测试
 enable_testing()
