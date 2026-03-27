@@ -115,6 +115,8 @@ void SubReactor::eventLoop() {
             
             if (events[i].events & (EPOLLIN | EPOLLPRI)) {
                 handleClientData(fd);
+            } else if (events[i].events & EPOLLOUT) {
+                handleClientWrite(fd);
             } else if (events[i].events & (EPOLLHUP | EPOLLERR)) {
                 handleClientDisconnect(fd);
             }
@@ -208,6 +210,57 @@ void SubReactor::handleClientDisconnect_locked(int client_fd) {
     }
 }
 
+void SubReactor::handleClientWrite(int client_fd) {
+    std::unique_ptr<ClientConnection>* client_ptr = nullptr;
+    
+    // 查找客户端连接
+    {
+        std::lock_guard<std::mutex> lock(clients_mutex_);
+        auto it = clients_.find(client_fd);
+        if (it == clients_.end()) {
+            return;
+        }
+        client_ptr = &(it->second);
+    }
+    
+    ClientConnection* client = client_ptr->get();
+    
+    if (client->write_buffer.empty()) {
+        // 写缓冲区为空，移除 EPOLLOUT 事件
+        modifyEpollEvent(client_fd, EPOLLIN | EPOLLET);
+        return;
+    }
+    
+    // 尝试发送数据
+    ssize_t bytes_sent = write(client_fd, client->write_buffer.c_str(), client->write_buffer.length());
+    
+    if (bytes_sent < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            // 写缓冲区满，注册 EPOLLOUT 事件等待下一次可写
+            modifyEpollEvent(client_fd, EPOLLIN | EPOLLOUT | EPOLLET);
+            return;
+        } else {
+            // 其他错误，断开连接
+            DKV_LOG_ERROR("发送数据失败: ", strerror(errno));
+            handleClientDisconnect(client_fd);
+            return;
+        }
+    }
+    
+    if (bytes_sent > 0) {
+        // 移除已发送的数据
+        client->write_buffer.erase(0, bytes_sent);
+        
+        if (!client->write_buffer.empty()) {
+            // 还有数据未发送，注册 EPOLLOUT 事件
+            modifyEpollEvent(client_fd, EPOLLIN | EPOLLOUT | EPOLLET);
+        } else {
+            // 数据发送完毕，移除 EPOLLOUT 事件
+            modifyEpollEvent(client_fd, EPOLLIN | EPOLLET);
+        }
+    }
+}
+
 void SubReactor::sendResponse(int client_fd, const Response& response) {
     std::string resp_str;
     
@@ -217,12 +270,22 @@ void SubReactor::sendResponse(int client_fd, const Response& response) {
         resp_str = RESPProtocol::serializeBulkString(response.data);
     }
     
-    ssize_t bytes_sent = write(client_fd, resp_str.c_str(), resp_str.length());
-    if (bytes_sent < 0) {
-        DKV_LOG_ERROR("子Reactor发送响应失败");
-        // 发送失败可能意味着连接已断开，尝试清理
-        handleClientDisconnect(client_fd);
+    std::unique_ptr<ClientConnection>* client_ptr = nullptr;
+    
+    // 查找客户端连接
+    {
+        std::lock_guard<std::mutex> lock(clients_mutex_);
+        auto it = clients_.find(client_fd);
+        if (it == clients_.end()) {
+            DKV_LOG_ERROR("客户端连接不存在");
+            return;
+        }
+        client_ptr = &(it->second);
     }
+    
+    ClientConnection* client = client_ptr->get();
+    client->write_buffer.append(resp_str);
+    handleClientWrite(client_fd);
 }
 
 bool SubReactor::setNonBlocking(int fd) {

@@ -70,6 +70,7 @@ public:
 private:
     void eventLoop();
     void handleClientData(int client_fd);
+    void handleClientWrite(int client_fd);
     void handleClientDisconnect(int client_fd);
     void handleClientDisconnect_locked(int client_fd);
     void sendResponse(int client_fd, const Response& response);
