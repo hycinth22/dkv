@@ -144,7 +144,9 @@ void SubReactor::handleClientData(int client_fd) {
     ssize_t bytes_read;
     
     while ((bytes_read = read(client_fd, buffer, sizeof(buffer))) > 0) {
-        client->read_buffer.append(buffer, bytes_read);
+        for (ssize_t i = 0; i < bytes_read; ++i) {
+            client->read_buffer.push_back(buffer[i]);
+        }
     }
     
     if (bytes_read == 0) {
@@ -160,9 +162,10 @@ void SubReactor::handleClientData(int client_fd) {
     
     // 解析命令
     size_t pos = 0;
-    while (pos < client->read_buffer.length()) {
-        DKV_LOG_DEBUG("SubReactor::handleClientData 解析命令前: ", client->read_buffer.substr(pos));
-        Command command = RESPProtocol::parseCommand(client->read_buffer, pos);
+    std::string read_buffer_str(client->read_buffer.begin(), client->read_buffer.end());
+    while (pos < read_buffer_str.length()) {
+        DKV_LOG_DEBUG("SubReactor::handleClientData 解析命令前: ", read_buffer_str.substr(pos));
+        Command command = RESPProtocol::parseCommand(read_buffer_str, pos);
         DKV_LOG_DEBUG("SubReactor::handleClientData 解析命令后: ", Utils::commandTypeToString(command.type));
         for (const auto& arg : command.args) {
             DKV_LOG_DEBUG("SubReactor::handleClientData 解析命令参数: ", arg);
@@ -179,7 +182,7 @@ void SubReactor::handleClientData(int client_fd) {
             task.sub_reactor = this;
             task.command = command;
             task.client_fd = client_fd;
-            task.client_read_buffer = client->read_buffer.substr(pos);
+            task.client_read_buffer = read_buffer_str.substr(pos);
             task.parsed_pos = pos;
             
             worker_pool_->enqueue(task);
@@ -188,7 +191,9 @@ void SubReactor::handleClientData(int client_fd) {
     
     // 移除已处理的数据
     if (pos > 0) {
-        client->read_buffer.erase(0, pos);
+        for (size_t i = 0; i < pos && !client->read_buffer.empty(); ++i) {
+            client->read_buffer.pop_front();
+        }
     }
 }
 
@@ -232,7 +237,9 @@ void SubReactor::handleClientWrite(int client_fd) {
     }
     
     // 尝试发送数据
-    ssize_t bytes_sent = write(client_fd, client->write_buffer.c_str(), client->write_buffer.length());
+    // 将 deque 中的数据复制到临时缓冲区
+    std::vector<char> temp_buffer(client->write_buffer.begin(), client->write_buffer.end());
+    ssize_t bytes_sent = write(client_fd, temp_buffer.data(), temp_buffer.size());
     
     if (bytes_sent < 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
@@ -249,7 +256,9 @@ void SubReactor::handleClientWrite(int client_fd) {
     
     if (bytes_sent > 0) {
         // 移除已发送的数据
-        client->write_buffer.erase(0, bytes_sent);
+        for (ssize_t i = 0; i < bytes_sent && !client->write_buffer.empty(); ++i) {
+            client->write_buffer.pop_front();
+        }
         
         if (!client->write_buffer.empty()) {
             // 还有数据未发送，注册 EPOLLOUT 事件
@@ -284,7 +293,9 @@ void SubReactor::sendResponse(int client_fd, const Response& response) {
     }
     
     ClientConnection* client = client_ptr->get();
-    client->write_buffer.append(resp_str);
+    for (char c : resp_str) {
+        client->write_buffer.push_back(c);
+    }
     handleClientWrite(client_fd);
 }
 

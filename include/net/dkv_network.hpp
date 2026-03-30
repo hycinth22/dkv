@@ -22,8 +22,8 @@ namespace dkv {
 struct ClientConnection {
     int fd;
     sockaddr_in addr;
-    std::string read_buffer;
-    std::string write_buffer;
+    std::deque<char> read_buffer;
+    std::deque<char> write_buffer;
     bool connected;
     
     ClientConnection(int socket_fd, const sockaddr_in& address) 
