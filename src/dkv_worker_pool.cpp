@@ -71,14 +71,17 @@ void WorkerThreadPool::workerThread() {
                 return stop_.load() || !task_queue_.empty(); 
             });
             
-            // 如果线程池已停止且任务队列为空，则退出
-            if (stop_.load() && task_queue_.empty()) {
-                break;
+            if (!task_queue_.empty()) {
+                // 获取任务
+                task = std::move(task_queue_.front());
+                task_queue_.pop();
+            } else {
+                if (stop_.load()) {
+                    break; // 如果线程池已停止且任务队列为空，则退出
+                } else {
+                    continue; // 虚假唤醒，循环等待
+                }
             }
-            
-            // 获取任务
-            task = std::move(task_queue_.front());
-            task_queue_.pop();
         }
         
         Response response;
